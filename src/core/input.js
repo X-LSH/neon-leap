@@ -31,6 +31,8 @@ const EVENT_CODES = {
   KeyR: 'restart',
   Escape: 'pause',
   F1: 'toggleDebug',
+  BracketRight: 'nextAnchor',
+  BracketLeft: 'prevAnchor',
 };
 
 export function createInput(target = window) {

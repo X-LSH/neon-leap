@@ -62,11 +62,49 @@ function build() {
   // ⑦ 头顶横梁：距地面 3 格，跳跃会被截断在约 1.2 格
   rect(62, GROUND_Y - 3, 70, GROUND_Y - 3);
 
-  // ⑧ 出口
-  g[GROUND_Y - 1][105] = 'E';
+  // ── ⑨ 机关考区（每类机关一个独立小关）
+  //   尖刺带：地面上的 ^ 需要跳过去
+  rect(74, GROUND_Y - 1, 78, GROUND_Y - 1, '^');
+
+  //   激光柱：x=84 一道垂直周期激光，卡关闭窗口通过
+  //   （激光本体在 entities 里定义，不占网格）
+
+  //   移动平台：89–94 挖空，靠往返平台摆渡
+  rect(89, GROUND_Y, 94, H - 1, '.');
+
+  //   崩塌地块：99–101 挖空，用崩塌地块铺面（踩上去 0.5s 后掉下去）
+  rect(99, GROUND_Y, 101, H - 1, '.');
+
+  //   传送门：地面端口 → 高处高台端口（107–109 是落脚平台）
+  rect(107, GROUND_Y - 6, 109, GROUND_Y - 6);
+  rect(103, GROUND_Y, 103, GROUND_Y - 1);
+
+  // ── 出口（在传送门目标平台上）
+  g[GROUND_Y - 7][108] = 'E';
 
   return g.map((row) => row.join(''));
 }
+
+/**
+ * 机关定义（格子坐标）。
+ * 与字符网格分工：网格放静态地形，这里放"会动的东西"。
+ */
+const ENTITIES = [
+  // 激光柱：从地面上方 6 格一直打到地面。duty 0.55 表示周期内 55% 时间开启。
+  { type: 'laser', from: { x: 84, y: 13 }, to: { x: 84, y: 18 }, period: 2.4, phase: 0, duty: 0.55 },
+
+  // 摆渡平台：横跨 89–93 的坑，往返一周 3.6 秒
+  { type: 'platform', from: { x: 89, y: 17 }, to: { x: 92, y: 17 }, w: 2, period: 3.6, phase: 0 },
+
+  // 弹跳板：踩上去大跳（3.7 格），顺便重置冲刺
+  { type: 'bounce', at: { x: 97, y: 18 }, w: 1 },
+
+  // 崩塌地块：3 格宽的临时桥面
+  { type: 'crumble', at: { x: 99, y: 19 }, w: 3 },
+
+  // 传送门：地面 → 高台
+  { type: 'portal', tag: 'up', at: { x: 104, y: 18 }, to: { x: 108, y: 11 } },
+];
 
 export default {
   id: 'testbed',
@@ -75,4 +113,18 @@ export default {
   showRuler: true,
   spawn: { x: 3, y: 18 },
   tiles: build(),
+  entities: ENTITIES,
+  /** 考区锚点：按 [ ] 在此间跳转，避免调参时每次都要跑十几秒过去。 */
+  anchors: [
+    { name: '起跑道', x: 3, y: 18 },
+    { name: '三格坑', x: 20, y: 18 },
+    { name: '渐高台阶', x: 26, y: 18 },
+    { name: '四格坑', x: 37, y: 18 },
+    { name: '窄槽·墙跳', x: 49, y: 14 },
+    { name: '高墙·抓墙', x: 55, y: 18 },
+    { name: '横梁·撞头', x: 61, y: 18 },
+    { name: '机关·危险', x: 71, y: 18 },
+    { name: '机关·助力', x: 88, y: 18 },
+    { name: '传送门', x: 103, y: 18 },
+  ],
 };

@@ -9,7 +9,10 @@ import { TILE } from '../game/config.js';
 import { createWorld } from '../game/world.js';
 import { createPlayer, updatePlayer, killPlayer, respawnPlayer, interpolated } from '../game/player.js';
 import { createCamera, updateCamera, snapCamera, shakeCamera } from '../game/camera.js';
+import { createEntities, updateEntities, ENTITY, CRUMBLE_STATE } from '../game/entities.js';
+import { resolveInteractions, makePlatformGroundCheck } from '../game/interact.js';
 import { drawBackdrop } from '../render/backdrop.js';
+import { drawEntities } from '../render/entities.js';
 import { PAL } from '../render/palette.js';
 import { glowStroke, polyPath, circlePath } from '../render/draw.js';
 import testbed from '../levels/testbed.js';
@@ -36,6 +39,8 @@ export function createPlayScene({ view, input }) {
   const world = createWorld(testbed);
   const player = createPlayer(world.spawn.x * TILE, world.spawn.y * TILE);
   const camera = createCamera();
+  const ents = createEntities(world);
+  const groundCheck = makePlatformGroundCheck(ents);
   const trail = [];
 
   const elStats = document.getElementById('stats');
@@ -47,27 +52,73 @@ export function createPlayScene({ view, input }) {
   let hudTimer = 0;
   let respawnTimer = 0;
 
+  /** 关卡重开时把机关恢复到初始状态（含崩塌地块与各类冷却）。 */
+  function resetEntities() {
+    ents.time = 0;
+    world.clearDynamicSolid();
+    for (const e of ents.list) {
+      if (e.kind === ENTITY.CRUMBLE) {
+        e.state = CRUMBLE_STATE.IDLE;
+        e.timer = 0;
+      } else if (e.kind === ENTITY.BOUNCE || e.kind === ENTITY.PORTAL) {
+        e.cooldown = 0;
+      }
+    }
+  }
+
   function restart() {
     respawnPlayer(player, world.spawn.x * TILE, world.spawn.y * TILE);
     trail.length = 0;
     camera.shake = 0;
     camera.offsetX = 0;
     camera.offsetY = 0;
+    resetEntities();
     snapCamera(camera, player, view, world);
+  }
+
+  /**
+   * 考区跳转。测试场横跨 112 格，靠双腿跑一遍要十几秒，
+   * 调参时这个成本会让「改一个数 → 试一下」的循环变得不可忍受。
+   * 正式关卡不需要这个功能，它是测试场专用的开发期工具。
+   */
+  let anchorIndex = 0;
+  function jumpAnchor(dir) {
+    const anchors = world.level.anchors;
+    if (!anchors || anchors.length === 0) return;
+    anchorIndex = (anchorIndex + dir + anchors.length) % anchors.length;
+    const a = anchors[anchorIndex];
+    respawnPlayer(player, a.x * TILE, a.y * TILE);
+    resetEntities();
+    trail.length = 0;
+    camera.shake = 0;
+    snapCamera(camera, player, view, world);
+    elStats.textContent = `考区 · ${a.name}`;
   }
 
   function handleEvents(events) {
     for (const e of events) {
       if (e === 'restart') restart();
       else if (e === 'toggleDebug') debug = !debug;
+      else if (e === 'nextAnchor') jumpAnchor(1);
+      else if (e === 'prevAnchor') jumpAnchor(-1);
     }
   }
 
   function update(dt) {
     elapsed += dt;
 
-    updatePlayer(player, input.intent(), world, dt);
+    // 顺序不可调换：机关先动（平台位置/激光相位/崩塌计时），
+    // 玩家再物理，最后才做交互修正（携带、吸附、致命判定）。
+    updateEntities(ents, world, dt);
+    updatePlayer(player, input.intent(), world, dt, groundCheck);
+    const hit = resolveInteractions(player, ents);
     input.endStep();
+
+    if (hit.killed && !player.dead) {
+      killPlayer(player);
+      shakeCamera(camera, 9);
+      respawnTimer = RESPAWN_DELAY;
+    }
 
     const dashing = player.dashTimer > 0 || player.freeze > 0;
     if (dashing) {
@@ -121,7 +172,8 @@ export function createPlayScene({ view, input }) {
       row('buffer', p.buffer.toFixed(3)) +
       row('dash', `${p.dashesLeft}  cd ${p.dashCd.toFixed(2)}  frz ${p.freeze.toFixed(2)}`) +
       row('stam', p.stamina.toFixed(2)) +
-      row('trail', String(trail.length));
+      row('trail', String(trail.length)) +
+      row('anchor', world.level.anchors ? world.level.anchors[anchorIndex].name : '-');
   }
 
   function visibleTileRange() {
@@ -292,6 +344,7 @@ export function createPlayScene({ view, input }) {
     drawBackdrop(ctx, view, camera);
     drawTiles();
     if (world.level.showRuler) drawRuler();
+    drawEntities(ctx, ents, elapsed);
     drawExit();
     drawTrail();
     drawPlayer(alpha);

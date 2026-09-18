@@ -76,7 +76,17 @@ function endDash(p) {
   }
 }
 
-export function updatePlayer(p, inp, world, dt) {
+/**
+ * @param {object} p 玩家状态
+ * @param {object} inp 本步意图
+ * @param {object} world 世界（只含静态地形 + 动态实心）
+ * @param {number} dt 固定步长
+ * @param {((p:object)=>boolean)|null} [extraGround]
+ *        外部地面回调。移动平台是**单向**的，不能写进 world.isSolid
+ *        （那样会变成实心墙，玩家从下方跳不上去），
+ *        所以要用这个回调告诉玩家「你脚下还踩着东西」。
+ */
+export function updatePlayer(p, inp, world, dt, extraGround = null) {
   p.prevX = p.x;
   p.prevY = p.y;
   p.justLanded = false;
@@ -225,7 +235,7 @@ export function updatePlayer(p, inp, world, dt) {
     p.vy = 0;
   }
 
-  p.grounded = onGround(p, world);
+  p.grounded = onGround(p, world) || (extraGround ? extraGround(p) === true : false);
   if (p.grounded && !wasGrounded) p.justLanded = true;
 
   // 落地恢复：冲刺次数与抓墙耐力同时回满

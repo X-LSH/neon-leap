@@ -216,20 +216,64 @@ async function main() {
   ok('状态机进入 jump', jumpDebug.state === 'jump', `state=${jumpDebug.state}`);
   ok('离地后 ground 为 false', jumpDebug.ground === 'false', `ground=${jumpDebug.ground}`);
 
-  // ── 测冲刺（必须在下落/冲刺进行中读，落地会合法地把次数恢复成 1）
+  // ── 测冲刺
+  // 断言用「速度」而不是「剩余次数」：冲刺速度 450 远超跑速 165，是冲刺的必然结果；
+  // 而剩余次数会在落地时被合法恢复，采样窗口只有 200ms，时序一抖就误报。
   await sleep(1600);
   const beforeDash = parseDebug(await readDebug());
   const dashesBefore = Number(String(beforeDash.dash || '').split(/\s+/)[0]);
 
   await keyDown('KeyX', 'KeyX', 88);
-  await sleep(90);
+  await sleep(70);
+  const dashStats = parseVelocity(await readStats());
   const dashDebug = parseDebug(await readDebug());
   const dashesAfter = Number(String(dashDebug.dash || '').split(/\s+/)[0]);
   await shot('04-dash');
   await keyUp('KeyX', 'KeyX', 88);
 
   ok('冲刺前有可用次数', dashesBefore >= 1, `dashesLeft=${dashesBefore}`);
-  ok('冲刺后次数被消耗', dashesAfter < dashesBefore, `${dashesBefore} → ${dashesAfter}`);
+  ok('冲刺产生远超跑速的速度', dashStats && Math.abs(dashStats.vx) >= 300,
+    `vx=${dashStats?.vx}（跑速上限 ${165}）`);
+  ok('冲刺期间次数已被消耗', dashesAfter < dashesBefore || dashDebug.dash?.includes('cd 0.1'),
+    `${dashesBefore} → ${dashesAfter}`);
+
+  // ── 机关考区：两处锚点各截一张，覆盖「危险类」与「助力类」
+  const hop = async (n) => {
+    for (let i = 0; i < n; i++) {
+      await keyDown(']', 'BracketRight', 221);
+      await keyUp(']', 'BracketRight', 221);
+      await sleep(70);
+    }
+    await sleep(420);
+  };
+
+  // anchors 索引从 0 起算：按 7 次 → 机关·危险（尖刺带 + 激光柱）
+  await hop(7);
+  await shot('06-machines-hazard');
+  const anchorA = parseDebug(await readDebug());
+  ok('考区跳转生效（危险类机关）', anchorA.anchor === '机关·危险', `anchor=${anchorA.anchor}`);
+
+  // 再按 1 次 → 机关·助力（摆渡平台 + 弹跳板 + 崩塌地块）
+  await hop(1);
+  await shot('07-machines-helper');
+  const anchorB = parseDebug(await readDebug());
+  ok('考区跳转生效（助力类机关）', anchorB.anchor === '机关·助力', `anchor=${anchorB.anchor}`);
+
+  const machineColors = await evaluate(`(() => {
+    const cv = document.getElementById('screen');
+    const ctx = cv.getContext('2d');
+    const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
+    const set = new Set();
+    for (let i = 0; i < d.length; i += 4 * 97) set.add(d[i] + ',' + d[i+1] + ',' + d[i+2]);
+    return set.size;
+  })()`);
+  ok('机关考区渲染出更丰富的画面', machineColors >= 4, `${machineColors} 种颜色`);
+
+  // ── 传送门
+  await hop(1);
+  await shot('08-portal');
+  const anchorC = parseDebug(await readDebug());
+  ok('考区跳转生效（传送门）', anchorC.anchor === '传送门', `anchor=${anchorC.anchor}`);
 
   // ── 响应式：切到手机宽度
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 780, deviceScaleFactor: 2, mobile: true });

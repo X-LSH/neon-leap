@@ -36,6 +36,12 @@ export function createWorld(level) {
   }
 
   const solid = new Uint8Array(w * h);
+  /**
+   * 动态实心层。崩塌地块这类「随时间改变实心状态」的机关写在这一层，
+   * 与静态地形分开 —— 好处是可以整表清空后按当前帧状态重建，
+   * 不必为每个机关维护增量状态，也就不会出现「漏撤销一格」这类脏数据。
+   */
+  const dynamic = new Uint8Array(w * h);
   const spikes = [];
   const checkpoints = [];
   let exit = null;
@@ -58,7 +64,14 @@ export function createWorld(level) {
   function isSolid(tx, ty) {
     if (tx < 0 || tx >= w || ty < 0) return true;
     if (ty >= h) return false;
-    return solid[ty * w + tx] === 1;
+    const i = ty * w + tx;
+    return solid[i] === 1 || dynamic[i] === 1;
+  }
+
+  /** 把某格标为动态实心（或撤销）。越界安全，越界调用是空操作。 */
+  function setDynamicSolid(tx, ty, on) {
+    if (tx < 0 || ty < 0 || tx >= w || ty >= h) return;
+    dynamic[ty * w + tx] = on ? 1 : 0;
   }
 
   return {
@@ -76,6 +89,10 @@ export function createWorld(level) {
     spikes,
     entities: level.entities ? level.entities.slice() : [],
     isSolid,
+    setDynamicSolid,
+    clearDynamicSolid() {
+      dynamic.fill(0);
+    },
   };
 }
 

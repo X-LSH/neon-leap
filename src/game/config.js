@@ -65,6 +65,13 @@ export const CFG = {
   climbUpSpeed: 45,     // u/s  向上攀爬速度
   climbDownSpeed: 80,   // u/s  向下攀爬速度
 
+  // ── 机关
+  bounceSpeed: -420,    // u/s  弹跳板初速（≈3.7 格，必须明显高于长按跳，否则弹跳板没有存在意义）
+  crumbleShake: 0.5,    // s    踩上崩塌地块后到开始崩塌的延迟 —— 这段就是玩家的撤离窗口
+  crumbleRespawn: 2.5,  // s    崩塌后恢复原状的时间
+  portalCooldown: 0.35, // s    传送冷却，防止在出口原地反复触发
+  laserWarn: 0.35,      // s    激光开启前的预警时长（危险必须可预告，否则就是不可归因的死亡）
+
   // ── 其他
   floorSnap: 1.0,       // u    地面探测容差（防高速穿透）
 };

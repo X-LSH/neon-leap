@@ -19,6 +19,10 @@ import { CFG, TILE, PLAYER_W, PLAYER_H, FIXED_DT, JUMP_APEX, DASH_REACH, CLIMB_R
 import { moveX, moveY, touchingWall } from '../src/game/physics.js';
 import { createPlayer, updatePlayer } from '../src/game/player.js';
 import { createWorld } from '../src/game/world.js';
+import {
+  createEntities, updateEntities, ENTITY, CRUMBLE_STATE, triggerCrumble, spikeHitbox,
+} from '../src/game/entities.js';
+import { resolveInteractions } from '../src/game/interact.js';
 import testbed from '../src/levels/testbed.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -235,6 +239,169 @@ section('关卡数据');
   ok('左右越界视为实心（封边）', world.isSolid(-1, 5) && world.isSolid(world.w + 1, 5));
   ok('上方越界视为实心（封顶）', world.isSolid(5, -1));
   ok('下方越界视为空（掉出去即死）', !world.isSolid(5, world.h + 1));
+}
+
+// ── 6. 机关系统
+section('机关系统');
+{
+  const world = createWorld(testbed);
+  const ents = createEntities(world);
+  const dt = FIXED_DT;
+  const pick = (k) => ents.list.filter((e) => e.kind === k);
+
+  const lasers = pick(ENTITY.LASER);
+  const platforms = pick(ENTITY.PLATFORM);
+  const crumbles = pick(ENTITY.CRUMBLE);
+  const portals = pick(ENTITY.PORTAL);
+  const bounces = pick(ENTITY.BOUNCE);
+  const spikes = pick(ENTITY.SPIKE);
+
+  ok('五类机关在关卡里齐全',
+    lasers.length && platforms.length && crumbles.length && portals.length && bounces.length,
+    `激光${lasers.length} 平台${platforms.length} 崩塌${crumbles.length} 门${portals.length} 弹板${bounces.length}`);
+
+  // ── 激光：占空比必须与定义一致（危险的可预告性依赖它）
+  {
+    const L = lasers[0];
+    const N = 1200;
+    let onCount = 0;
+    for (let i = 0; i < N; i++) {
+      ents.time = (i / N) * L.period - dt;
+      updateEntities(ents, world, dt);
+      if (L.on) onCount += 1;
+    }
+    const ratio = onCount / N;
+    ok('激光占空比符合定义', Math.abs(ratio - L.duty) < 0.02, `实测 ${ratio.toFixed(3)} vs ${L.duty}`);
+
+    let warnSeen = false;
+    for (let i = 0; i < N; i++) {
+      ents.time = (i / N) * L.period - dt;
+      updateEntities(ents, world, dt);
+      if (L.warn) warnSeen = true;
+      if (L.warn && L.on) break;   // 预警与开启不得同时为真
+    }
+    ok('激光开启前存在预警窗口（死亡可预告）', warnSeen);
+  }
+
+  // ── 平台：端点与周期性
+  {
+    const P = platforms[0];
+    const sample = (t) => {
+      ents.time = t - dt;
+      updateEntities(ents, world, dt);
+      return P.x;
+    };
+    const at0 = sample(0);
+    const atHalf = sample(P.period / 2);
+    const atFull = sample(P.period);
+
+    ok('平台起点在 from', Math.abs(at0 - P.fromX) < 0.5, `${at0.toFixed(1)} vs ${P.fromX.toFixed(1)}`);
+    ok('平台半周期到达 to', Math.abs(atHalf - P.toX) < 0.5, `${atHalf.toFixed(1)} vs ${P.toX.toFixed(1)}`);
+    ok('平台整周期回到起点', Math.abs(atFull - at0) < 0.5);
+  }
+
+  // ── 崩塌地块：完整时序
+  {
+    const C = crumbles[0];
+    ok('崩塌地块初始为 idle 且是实心', C.state === CRUMBLE_STATE.IDLE && world.isSolid(C.tx, C.ty));
+
+    ok('踩踏触发 shaking', triggerCrumble(C) === true && C.state === CRUMBLE_STATE.SHAKING);
+    ok('崩塌中重复踩踏不重置计时', triggerCrumble(C) === false);
+    ok('shaking 期间仍然实心（给玩家撤离窗口）', world.isSolid(C.tx, C.ty));
+
+    ents.time = 0;
+    for (let i = 0; i < Math.ceil((CFG.crumbleShake + 0.05) / dt); i++) updateEntities(ents, world, dt);
+    ok('延时后进入 gone', C.state === CRUMBLE_STATE.GONE, `state=${C.state}`);
+    ok('gone 期间格子不再是实心', !world.isSolid(C.tx, C.ty));
+
+    for (let i = 0; i < Math.ceil((CFG.crumbleRespawn + 0.05) / dt); i++) updateEntities(ents, world, dt);
+    ok('恢复后回到 idle 且重新实心', C.state === CRUMBLE_STATE.IDLE && world.isSolid(C.tx, C.ty));
+  }
+
+  // ── 传送门：动量守恒 + 冷却
+  {
+    const P = portals[0];
+    const p = createPlayer(0, 0);
+    p.x = P.ax - p.w / 2;
+    p.y = P.ay - p.h / 2;
+    p.prevX = p.x;
+    p.prevY = p.y;
+    p.vx = 123;
+    p.vy = -45;
+
+    const r1 = resolveInteractions(p, { list: [P] });
+    ok('传送门被触发', r1.events.some((e) => e.type === 'portal'));
+    ok('传送保持动量（速度矢量不变）', p.vx === 123 && p.vy === -45, `vx=${p.vx} vy=${p.vy}`);
+    ok('传送后位置落在出口端',
+      Math.abs(p.x + p.w / 2 - P.bx) < 0.01 && Math.abs(p.y + p.h / 2 - P.by) < 0.01);
+
+    const r2 = resolveInteractions(p, { list: [P] });
+    ok('传送有冷却，不会在出口原地反复触发', !r2.events.some((e) => e.type === 'portal'));
+  }
+
+  // ── 弹跳板
+  {
+    const B = bounces[0];
+    // 脚底刚好落在板面上：再高一点就够不着，这正是判定边界的意义
+    const p = createPlayer(B.x, B.y - PLAYER_H);
+    p.vy = 120;
+    p.prevY = p.y - 4;
+    p.dashesLeft = 0;
+    const r = resolveInteractions(p, { list: [B] });
+    ok('弹跳板被触发', r.events.some((e) => e.type === 'bounce'));
+    ok('弹跳板给足向上速度', p.vy <= CFG.bounceSpeed + 1, `vy=${p.vy.toFixed(0)}`);
+    ok('弹跳板重置冲刺次数', p.dashesLeft === 1);
+
+    // 反面对照：站在板子上方一格之外，不应被触发
+    const far = createPlayer(B.x, B.y - PLAYER_H - TILE * 2);
+    far.vy = 120;
+    far.prevY = far.y;
+    ok('离开板面不会被弹', !resolveInteractions(far, { list: [B] }).events.some((e) => e.type === 'bounce'));
+  }
+
+  // ── 尖刺判定框：必须严格落在视觉体积之内
+  {
+    ok('尖刺来自字符网格', spikes.length > 0, `${spikes.length} 个`);
+
+    let insideAll = true;
+    let maxAreaRatio = 0;
+    for (const s of spikes) {
+      const hb = spikeHitbox(s);
+      const inside =
+        hb.x >= s.tx * TILE - 0.001 && hb.y >= s.ty * TILE - 0.001 &&
+        hb.x + hb.w <= (s.tx + 1) * TILE + 0.001 && hb.y + hb.h <= (s.ty + 1) * TILE + 0.001;
+      if (!inside) insideAll = false;
+      maxAreaRatio = Math.max(maxAreaRatio, (hb.w * hb.h) / (TILE * TILE));
+    }
+    ok('尖刺判定框不超出所在格子', insideAll);
+    ok('尖刺判定框明显小于整格（杜绝不可归因的死亡）', maxAreaRatio <= 0.3,
+      `最大占比 ${(maxAreaRatio * 100).toFixed(0)}%`);
+
+    // 反面对照：判定框必须真的存在，不是缩成 0 导致尖刺形同虚设
+    ok('尖刺判定框没有缩到失效', maxAreaRatio >= 0.15, `${(maxAreaRatio * 100).toFixed(0)}%`);
+  }
+
+  // ── 机关不能悬空：弹跳板必须坐落在实心地面上
+  // （悬空的弹跳板玩家永远踩不到，等于关卡里一个装饰品 —— 这类错误肉眼很难从截图上发现）
+  {
+    const bad = [];
+    for (const e of ents.list) {
+      if (e.kind !== ENTITY.BOUNCE) continue;
+      const tx = Math.floor((e.x + e.w / 2) / TILE);
+      const ty = Math.floor((e.y + e.h + 1) / TILE);
+      if (!world.isSolid(tx, ty)) bad.push(`(${tx},${ty})`);
+    }
+    ok('弹跳板下方有实心支撑（否则玩家踩不到）', bad.length === 0, bad.join(' '));
+
+    // 崩塌地块的每一格都必须位于挖空的坑上方（否则它没有存在意义）
+    const useless = [];
+    for (const e of crumbles) {
+      for (let i = 0; i < e.tw; i++) {
+        if (world.isSolid(e.tx + i, e.ty + 1)) useless.push(`(${e.tx + i},${e.ty})`);
+      }
+    }
+    ok('崩塌地块铺在坑洞之上（否则形同虚设）', useless.length === 0, useless.join(' '));
+  }
 }
 
 // ── 结果
