@@ -13,14 +13,20 @@ import cling from './07-cling.js';
 import zigzag from './08-zigzag.js';
 import stamina from './09-stamina.js';
 import switchback from './10-switchback.js';
+import pulse from './11-pulse.js';
+import collapse from './12-collapse.js';
+import gate from './13-gate.js';
+import confluence from './14-confluence.js';
+import threshold from './15-threshold.js';
 
 /** 开发用的手感测试场，不属于正式流程。 */
 export const TESTBED = testbed;
 
 /** 正式关卡（按 index 升序）。 */
-// zigzag(08) 与 switchback(10) 是竖井类关卡，可解性策略尚未调通（见 docs/SPEC.md 待办），
-// 暂时不注册进关卡表 —— 宁可少两关，也不交付「玩家可能卡死」的关卡。
-export const LEVELS = [firstLight, inertia, echo, refraction, thrust, hover, cling, stamina];
+// zigzag(08) 与 switchback(10) 暂缓：它们暴露了一个**引擎缺口** ——
+// 抓墙时水平速度锁死为 0，玩家爬到墙顶那一刻墙消失、原地掉落，永远翻不上去。
+// 需要补一个「翻越（mantle）」动作，属于引擎改动而非关卡调参，详见 docs/SPEC.md 待办。
+export const LEVELS = [firstLight, inertia, echo, refraction, thrust, hover, cling, stamina, pulse, collapse, gate, confluence, threshold];
 
 export function levelByIndex(n) {
   return LEVELS.find((l) => l.index === n) || null;

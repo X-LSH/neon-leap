@@ -34,8 +34,7 @@ function build() {
   rect(LEFT_X, TOP, LEFT_X, GY - 2);
   rect(RIGHT_X, TOP, RIGHT_X, GY - 1);
 
-  rect(LEFT_X, TOP - 1, RIGHT_X, TOP - 1);   // 顶部封板
-  g[TOP - 1][RIGHT_X + 4] = 'E';
+  g[GY - 1][RIGHT_X + 4] = 'E';
 
   return g.map((r) => r.join(''));
 }

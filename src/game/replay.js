@@ -24,7 +24,7 @@
 
 import { TILE, FIXED_DT } from './config.js';
 import { createPlayer, updatePlayer } from './player.js';
-import { createEntities, updateEntities } from './entities.js';
+import { createEntities, updateEntities, ENTITY } from './entities.js';
 import { resolveInteractions, makePlatformGroundCheck } from './interact.js';
 
 /** 把秒换算成帧数。写策略时用秒更直观。 */
@@ -106,6 +106,57 @@ export function makeContext(world, ents) {
         }
       }
       return false;
+    },
+
+    /**
+     * 前方是否有**正在开启**的激光挡路。
+     * 返回距离（格）或 Infinity。
+     *
+     * 这是「危险可预告」在自动控制侧的对偶：
+     * 激光有关闭窗口，所以策略必须能"等"—— 一个只会闷头向前的策略
+     * 在周期危险面前必然送死，而那是策略的缺陷，不是关卡的缺陷。
+     */
+    laserAhead(p, maxCells = 14) {
+      const cx = p.x + p.w / 2;
+      const cy = p.y + p.h / 2;
+      let best = Infinity;
+
+      for (const e of ents.list) {
+        if (e.kind !== ENTITY.LASER || !e.on) continue;
+        const vertical = Math.abs(e.x0 - e.x1) < 1;
+        const yTop = Math.min(e.y0, e.y1);
+        const yBot = Math.max(e.y0, e.y1);
+
+        if (vertical) {
+          const dx = e.x0 - cx;
+          if (dx <= 0 || dx > maxCells * TILE) continue;
+          // 玩家中心是否落在激光的纵向范围内（留一点容错）
+          if (cy < yTop - TILE || cy > yBot + TILE) continue;
+          best = Math.min(best, dx / TILE);
+        } else {
+          const xL = Math.min(e.x0, e.x1);
+          const xR = Math.max(e.x0, e.x1);
+          const dy = (e.y0 - cy);
+          if (dy <= 0 || dy > maxCells * TILE) continue;
+          if (cx < xL - TILE || cx > xR + TILE) continue;
+          best = Math.min(best, dy / TILE);
+        }
+      }
+      return best;
+    },
+
+    /** 前方最近的崩塌地块距离（格）或 Infinity —— 用来决定要不要加速通过。 */
+    crumbleAhead(p, maxCells = 10) {
+      const ty = Math.floor((p.y + p.h + 2) / TILE);
+      const start = Math.floor((p.x + p.w) / TILE);
+      let best = Infinity;
+      for (const e of ents.list) {
+        if (e.kind !== ENTITY.CRUMBLE) continue;
+        if (e.ty !== ty) continue;
+        const dx = e.tx - start;
+        if (dx >= 0 && dx <= maxCells) best = Math.min(best, dx);
+      }
+      return best;
     },
   };
 }

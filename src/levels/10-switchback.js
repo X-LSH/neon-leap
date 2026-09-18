@@ -33,9 +33,9 @@ function build() {
   rect(LEFT_X, TOP, LEFT_X, GY - 2);
   rect(RIGHT_X, TOP, RIGHT_X, GY - 1);
 
-  // 顶部平台向左延伸出通道，出口在左侧
-  rect(LEFT_X - 4, TOP - 1, RIGHT_X, TOP - 1);
-  g[TOP - 2][LEFT_X - 3] = 'E';
+  // 出口放在通道顶部右侧的落脚平台上（爬出通道后向右走即达）
+  rect(RIGHT_X, TOP - 1, RIGHT_X + 4, TOP - 1);
+  g[TOP - 2][RIGHT_X + 3] = 'E';
 
   return g.map((r) => r.join(''));
 }
