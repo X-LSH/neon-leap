@@ -480,6 +480,12 @@ section('关卡可解性');
     ok(`${tag} spawn 不落在实心块内`, !w.isSolid(level.spawn.x, level.spawn.y));
     ok(`${tag} spawn 下方是实心`, w.isSolid(level.spawn.x, level.spawn.y + 1));
     ok(`${tag} 有唯一出口`, !!w.exit);
+    // 出口下方必须是实心，玩家才站得住 —— 悬空的出口玩家跑到位置也触发不了，
+    // 而且这种错误**不会报任何错**，只会表现为「通关不了」。
+    // 我在 05 关就写错过一次（把 GY-1 写成 GY-10）。
+    ok(`${tag} 出口下方是实心（玩家站得住）`,
+      !w.exit || w.isSolid(w.exit.tx, w.exit.ty + 1),
+      w.exit ? `出口 (${w.exit.tx},${w.exit.ty})` : '无出口');
   }
 }
 
