@@ -11,6 +11,7 @@ import { createPlayer, updatePlayer, killPlayer, respawnPlayer, interpolated } f
 import { createCamera, updateCamera, snapCamera, shakeCamera } from '../game/camera.js';
 import { createEntities, updateEntities, ENTITY, CRUMBLE_STATE } from '../game/entities.js';
 import { resolveInteractions, makePlatformGroundCheck } from '../game/interact.js';
+import { atExit } from '../game/replay.js';
 import {
   createParticles, updateParticles, liveCount, clearParticles,
   burstDust, burstSparks, spawnGhost, burstDeath, spawnRing,
@@ -44,10 +45,10 @@ const PLAYER_GLOW = [
   { width: 1.3, alpha: 1 },
 ];
 
-export function createPlayScene({ view, input }) {
+export function createPlayScene({ view, input, level = testbed, progress = null, onExit = null }) {
   const ctx = view.ctx;
 
-  const world = createWorld(testbed);
+  const world = createWorld(level);
   const player = createPlayer(world.spawn.x * TILE, world.spawn.y * TILE);
   const camera = createCamera();
   const ents = createEntities(world);
@@ -60,6 +61,7 @@ export function createPlayScene({ view, input }) {
   let respawnTimer = 0;
   let ghostTimer = 0;
   let wallSparkTimer = 0;
+  let cleared = false;
 
   /** 关卡重开时把机关恢复到初始状态（含崩塌地块与各类冷却）。 */
   function resetEntities() {
@@ -194,8 +196,19 @@ export function createPlayScene({ view, input }) {
       respawnTimer -= dt;
       if (respawnTimer <= 0) {
         deaths += 1;
+        // 死亡计数只在真正死亡时写，不进热路径（localStorage 是同步 API，写一次会阻塞主线程）
+        if (progress) progress.recordDeath();
         restart();
       }
+    }
+
+    // 通关：记录成绩 → 返回关卡选择。
+    // 放在死亡处理之后，避免「同一帧既死又通关」这种边界情况下重复触发。
+    if (!cleared && atExit(player, world)) {
+      cleared = true;
+      if (progress) progress.recordClear(level.id, Math.round(elapsed * 1000), deaths);
+      if (onExit) onExit();
+      return;
     }
 
     updateParticles(particles, dt);

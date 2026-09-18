@@ -55,6 +55,12 @@ export default {
   hint: '方向键移动 · Z 跳跃（按住跳得更高）',
   spawn: { x: 2, y: GY - 1 },
   tiles: build(),
+  anchors: [
+    { name: '起点', x: 2, y: GY - 1 },
+    { name: '第一坑', x: 10, y: GY - 1 },
+    { name: '台阶', x: 21, y: GY - 1 },
+    { name: '终点前', x: 42, y: GY - 1 },
+  ],
 
   /**
    * 通关策略：一直向右跑；前方是坑或台阶就跳；起跳后持续按住把跳跃顶到最高。
