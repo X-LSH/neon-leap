@@ -10,7 +10,7 @@
  * `node --check src/main.js` 不会跟随 import —— 曾因此漏掉整个页面起不来的语法错误。
  */
 
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -71,6 +71,29 @@ for (const file of sourceFiles) {
   }
 }
 process.stdout.write(`   检查了 ${sourceFiles.length} 个文件\n`);
+
+// ── 1.5 文件规模
+// 规格 §1.3 写着「单文件上限 300 行（超了就拆）」，但这条规则过去**没有任何东西看守它** ——
+// 结果 play.js 一路长到 483 行、player.js 到 321 行，谁都没发现。
+// 一条没有断言的规则等于没有规则；补充断言比多写一遍「请遵守」有用得多。
+// 只约束 src/：scripts 是一串平铺的断言，拆开只会更难读，与规则要解决的问题相反。
+section('文件规模');
+{
+  const OVER_LIMIT = 300;
+  const srcFiles = await walk(join(ROOT, 'src'));
+  const sizes = [];
+  for (const file of srcFiles) {
+    const text = await readFile(file, 'utf8');
+    sizes.push({ file: file.replace(ROOT, '.').replace(/\\/g, '/'), lines: text.split('\n').length - (text.endsWith('\n') ? 1 : 0) });
+  }
+  sizes.sort((a, b) => b.lines - a.lines);
+  const over = sizes.filter((s) => s.lines > OVER_LIMIT);
+  ok(`src/ 下没有文件超过 ${OVER_LIMIT} 行`, over.length === 0,
+    over.map((s) => `${s.file} ${s.lines} 行`).join('、'));
+  ok('拆出来的文件确实更小（拆分不是为了把行数搬家）',
+    sizes[0].lines <= OVER_LIMIT, `最大 ${sizes[0].file} ${sizes[0].lines} 行`);
+  process.stdout.write(`   最大 ${sizes[0].lines} 行（${sizes[0].file}），共 ${sizes.length} 个文件\n`);
+}
 
 // ── 2. 手感常量的三条红线
 section('手感常量区间');

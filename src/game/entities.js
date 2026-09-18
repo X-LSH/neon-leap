@@ -275,3 +275,21 @@ export function crumbleTiles(e) {
   }
   return out;
 }
+
+/**
+ * 把关卡内所有机关恢复到初始状态（崩塌地块复位、弹跳板/传送冷却清零）。
+ * 关卡重开与考区跳转都要走这里 —— 放在 entities.js 是因为
+ * 「机关的状态」本来就只有这里知道，散落到场景层就会出现两处各写一半的修复。
+ */
+export function resetEntities(ents, world) {
+  ents.time = 0;
+  world.clearDynamicSolid();
+  for (const e of ents.list) {
+    if (e.kind === ENTITY.CRUMBLE) {
+      e.state = CRUMBLE_STATE.IDLE;
+      e.timer = 0;
+    } else if (e.kind === ENTITY.BOUNCE || e.kind === ENTITY.PORTAL) {
+      e.cooldown = 0;
+    }
+  }
+}

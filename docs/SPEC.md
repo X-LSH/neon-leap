@@ -62,40 +62,55 @@ neon-leap/
 ├── docs/SPEC.md               # 本文件
 ├── src/
 │   ├── main.js                # 引导：画布、循环、场景路由
-│   ├── core/
+│   ├── core/                  # 引擎层：不含任何游戏语义
 │   │   ├── loop.js            # 固定步长循环（物理 120Hz / 渲染随帧）
 │   │   ├── input.js           # 键盘 + 触屏 → 统一意图对象
+│   │   ├── stick.js           # 摇杆几何（8 向 / 死区 / 动态重定位，纯函数）
+│   │   ├── touch.js           # 触屏检测 + 触屏控件（DOM）
 │   │   ├── view.js            # 画布尺寸、DPR、世界↔屏幕变换
 │   │   ├── audio.js           # WebAudio 程序化合成器
 │   │   └── storage.js         # LocalStorage 封装 + 版本迁移
-│   ├── game/
+│   ├── game/                  # 规则层：纯逻辑，不碰 DOM / Canvas
 │   │   ├── config.js          # ★ 全部手感常量（单一真相源）
 │   │   ├── physics.js         # 碰撞求解（扫掠 AABB，纯函数）
 │   │   ├── player.js          # 玩家状态机（7 态）
-│   │   ├── entities.js        # 5 类机关的更新逻辑
+│   │   ├── dash.js            # 冲刺的三段相位（冻结 / 恒速 / 保留）
+│   │   ├── entities.js        # 5 类机关 + 关卡重置
+│   │   ├── interact.js        # 机关与玩家的交互修正
+│   │   ├── replay.js          # 可解性策略重放器
 │   │   ├── world.js           # 世界编排：加载关卡、推进实体、判定
 │   │   ├── camera.js          # 前瞻 + 阻尼 + 冲击震动
 │   │   ├── particles.js       # 对象池粒子系统（固定容量）
 │   │   └── progress.js        # 存档读写与解锁判定
 │   ├── levels/
 │   │   ├── index.js           # 关卡注册表（顺序即解锁顺序）
+│   │   ├── testbed.js         # 开发用测试场（不进 LEVELS，线上不可达）
 │   │   └── 01..15-*.js        # 每关一个文件
-│   ├── render/
+│   ├── render/                # 渲染层：只读状态，不修改
 │   │   ├── palette.js         # 配色令牌（唯一颜色来源）
-│   │   ├── backdrop.js        # 双层视差网格
 │   │   ├── draw.js            # 伪辉光描边工具、形状基元
+│   │   ├── stage.js           # 地形四层 + 测距标尺
+│   │   ├── actors.js          # 玩家与出口（全站仅这两个可多叠一层辉光）
+│   │   ├── entities.js        # 机关绘制
+│   │   ├── particles.js       # 粒子绘制
+│   │   ├── backdrop.js        # 双层视差网格
 │   │   └── hud.js             # 计时 / 死亡数 / 提示文案
-│   └── scenes/
-│       ├── title.js           # 标题（首次点击解锁音频）
-│       ├── select.js          # 关卡选择网格
+│   └── scenes/                # 唯一同时接触输入、更新与渲染的地方
+│       ├── select.js          # 关卡选择网格（也负责音频解锁的手势）
 │       └── play.js            # 游戏主场景
 └── scripts/
     ├── serve.mjs              # 本地静态服务器（零依赖，Node 原生 http）
     ├── verify.mjs             # 逻辑不变量自检（Node 裸跑，无浏览器）
-    └── e2e.mjs                # 真实 Chrome + CDP 端到端验证
+    ├── e2e.mjs                # 真实 Chrome + CDP 端到端验证
+    ├── trace.mjs              # 15 关可解性（重放策略并断言抵达出口）
+    └── abilities.mjs          # 玩家能力实测标尺
 ```
 
 **单文件上限 300 行**（超了就拆，不允许例外）。
+这条规则在 `verify.mjs` 的「文件规模」段里有断言看守 ——
+它曾经只写在文档里、无人执行，于是 `play.js` 一路长到 483 行、`player.js` 到 321 行。
+**一条没有断言的规则等于没有规则。** 约束范围是 `src/`：
+`scripts/` 是一串平铺的断言，拆开只会更难读，与规则要解决的问题正好相反。
 
 ---
 

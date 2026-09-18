@@ -235,6 +235,49 @@ async function main() {
   })()`);
   ok('画布确实渲染了内容', colors >= 4, `${colors} 种颜色`);
 
+  // ── 逐层校验地形与玩家的绘制真的发生了
+  // 「画布不为空」是个很弱的断言：少画一整层（比如受光顶边）它照样通过。
+  // 这里按调色板里的**确切颜色**去数像素 —— 某一层的颜色消失了，
+  // 就说明那次抽模块把它漏掉了。这是纯粹搬移类重构唯一靠得住的回归证据。
+  //
+  // ⚠️ 细描边必须用「邻域匹配」而不是精确匹配：
+  //    地形侧面轮廓是 1px 的发丝线，抗锯齿会把颜色摊到相邻像素上，
+  //    实测它**精确命中数恒为 0**（重构前后都是 0，而它明明画了）。
+  //    第一版断言就踩了这个坑，是拿基线截图对照才发现的 ——
+  //    「断言失败」不等于「代码错了」，也可能是不变量写错了。
+  //    各层颜色彼此相差都远大于容差，所以邻域匹配不会互相误判。
+  const layerPixels = await evaluate(`(() => {
+    const cv = document.getElementById('screen');
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    const want = [
+      { key: 'fill',   rgb: [0x17, 0x29, 0x3e], tol: 8  },   // PAL.platformFill 体填充
+      { key: 'inner',  rgb: [0x0d, 0x1a, 0x2a], tol: 16 },   // PAL.platformInner 内部格纹
+      { key: 'edge',   rgb: [0x25, 0x5a, 0x7d], tol: 16 },   // PAL.platformEdge  侧面轮廓
+      { key: 'glow',   rgb: [0x9c, 0xea, 0xff], tol: 8  },   // PAL.platformGlow  受光顶边
+      { key: 'player', rgb: [0x35, 0xe0, 0xff], tol: 8  },   // PAL.player        玩家轮廓
+    ];
+    const out = {};
+    for (const w of want) out[w.key] = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i]; const g = d[i + 1]; const b = d[i + 2];
+      for (const w of want) {
+        if (Math.abs(r - w.rgb[0]) <= w.tol
+          && Math.abs(g - w.rgb[1]) <= w.tol
+          && Math.abs(b - w.rgb[2]) <= w.tol) out[w.key] += 1;
+      }
+    }
+    return out;
+  })()`);
+  for (const [key, label, min] of [
+    ['fill', '地形体填充', 20000],
+    ['inner', '地形内部格纹', 5000],
+    ['edge', '地形侧面轮廓（1px 发丝线）', 100],
+    ['glow', '地形受光顶边', 300],
+    ['player', '玩家轮廓', 30],
+  ]) {
+    ok(`${label}已绘制`, layerPixels[key] >= min, `${layerPixels[key]} px（下限 ${min}）`);
+  }
+
   const size = await evaluate(`(() => { const cv = document.getElementById('screen'); return cv.width + 'x' + cv.height; })()`);
   ok('画布尺寸与视口匹配', /^\d+x\d+$/.test(String(size)), size);
 

@@ -14,6 +14,7 @@
 import { CFG, PLAYER_W, PLAYER_H } from './config.js';
 import { approach } from '../core/loop.js';
 import { moveX, moveY, onGround, touchingWall, atLedge } from './physics.js';
+import { updateDash } from './dash.js';
 
 export const STATE = {
   IDLE: 'idle',
@@ -61,22 +62,7 @@ export function createPlayer(x, y) {
   };
 }
 
-function beginDash(p) {
-  p.dashTimer = CFG.dashTime;
-  p.vx = p.dashDirX * CFG.dashSpeed;
-  p.vy = p.dashDirY * CFG.dashSpeed;
-  p.justDashed = true;
-}
-
-function endDash(p) {
-  p.dashTimer = 0;
-  const speed = Math.hypot(p.vx, p.vy);
-  if (speed > 0) {
-    const k = Math.min(1, CFG.dashEndSpeed / speed);
-    p.vx *= k;
-    p.vy *= k;
-  }
-}
+/** 冲刺的三段相位（冻结 / 恒速 / 保留）在 dash.js，见那里的说明。 */
 
 /**
  * @param {object} p 玩家状态
@@ -107,33 +93,8 @@ export function updatePlayer(p, inp, world, dt, extraGround = null) {
   if (inp.jump.pressed) p.buffer = CFG.jumpBuffer;
   if (p.buffer > 0) p.buffer = Math.max(0, p.buffer - dt);
 
-  // ── 冲刺触发：先冻结，再爆发
-  if (inp.dash.pressed && p.dashesLeft > 0 && p.dashCd <= 0 && p.freeze <= 0 && p.dashTimer <= 0) {
-    let dx = inp.moveX;
-    let dy = inp.moveY;
-    if (dx === 0 && dy === 0) dx = p.facing;
-    const len = Math.hypot(dx, dy);
-    p.dashDirX = dx / len;
-    p.dashDirY = dy / len;
-    p.dashesLeft -= 1;
-    p.dashCd = CFG.dashCooldown;
-    p.freeze = CFG.dashFreeze;
-    p.stamina = CFG.climbStamina;
-    p.state = STATE.DASH;
-  }
-
-  // ── 冻结期：时间暂停，只计时
-  if (p.freeze > 0) {
-    p.freeze = Math.max(0, p.freeze - dt);
-    if (p.freeze === 0) beginDash(p);
-    return;
-  }
-
-  // ── 冲刺中：无重力恒速，撞到任何东西立即收尾
-  if (p.dashTimer > 0) {
-    p.dashTimer = Math.max(0, p.dashTimer - dt);
-    const blocked = moveX(p, p.vx * dt, world) !== 0 || moveY(p, p.vy * dt, world) !== 0;
-    if (blocked || p.dashTimer === 0) endDash(p);
+  // ── 冲刺：三段相位整段独占本步（冻结 / 恒速 / 保留）
+  if (updateDash(p, inp, world, dt)) {
     p.state = STATE.DASH;
     return;
   }
