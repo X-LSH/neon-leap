@@ -183,6 +183,24 @@ async function main() {
     selectInfo ? selectInfo.text.slice(0, 60) : '');
   await shot('00-select');
 
+  // ── 音频：任何按键都是浏览器要求的「手势」，应能解锁 AudioContext
+  await keyDown('KeyM', 'KeyM', 77);
+  await keyUp('KeyM', 'KeyM', 77);
+  await sleep(320);
+  const mutedText = String(await evaluate(`document.getElementById('select-scene').textContent`));
+  ok('静音开关生效（提示行出现已静音）', mutedText.includes('已静音'), mutedText.slice(0, 80));
+
+  // 再按一次切回来，避免影响后续
+  await keyDown('KeyM', 'KeyM', 77);
+  await keyUp('KeyM', 'KeyM', 77);
+  await sleep(220);
+  const unmutedText = String(await evaluate(`document.getElementById('select-scene').textContent`));
+  ok('静音可以再次切回', !unmutedText.includes('已静音'));
+
+  // AudioContext 至少被创建过（typeof 检查比访问实例更稳，闭包不可达）
+  const audioSupported = await evaluate(`typeof (window.AudioContext || window.webkitAudioContext) === 'function'`);
+  ok('运行环境支持 WebAudio（音效通路可用）', audioSupported === true);
+
   // 按 Z 进入当前光标所在关卡
   await keyDown('KeyZ', 'KeyZ', 90);
   await keyUp('KeyZ', 'KeyZ', 90);

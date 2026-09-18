@@ -26,7 +26,7 @@ export const TESTBED = testbed;
 // zigzag(08) 与 switchback(10) 暂缓：它们暴露了一个**引擎缺口** ——
 // 抓墙时水平速度锁死为 0，玩家爬到墙顶那一刻墙消失、原地掉落，永远翻不上去。
 // 需要补一个「翻越（mantle）」动作，属于引擎改动而非关卡调参，详见 docs/SPEC.md 待办。
-export const LEVELS = [firstLight, inertia, echo, refraction, thrust, hover, cling, stamina, pulse, collapse, gate, confluence, threshold];
+export const LEVELS = [firstLight, inertia, echo, refraction, thrust, hover, cling, stamina, zigzag, pulse, collapse, switchback, gate, confluence, threshold];
 
 export function levelByIndex(n) {
   return LEVELS.find((l) => l.index === n) || null;

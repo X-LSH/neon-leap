@@ -45,7 +45,7 @@ const PLAYER_GLOW = [
   { width: 1.3, alpha: 1 },
 ];
 
-export function createPlayScene({ view, input, level = testbed, progress = null, onExit = null }) {
+export function createPlayScene({ view, input, level = testbed, progress = null, onExit = null, audio = null }) {
   const ctx = view.ctx;
 
   const world = createWorld(level);
@@ -133,14 +133,19 @@ export function createPlayScene({ view, input, level = testbed, progress = null,
 
     if (player.justJumped) {
       burstDust(particles, cx, feetY, 0.75, 5);
+      // 翻越、墙跳、普通跳是三件不同的事，给三个不同的音 ——
+      // 玩家靠声音就能确认「我刚才那个操作被识别成了什么」
+      audio?.play(player.justMantled ? 'mantle' : (player.justWallJumped ? 'wallJump' : 'jump'));
     }
     if (player.justLanded) {
       burstDust(particles, cx, feetY, 1.25, 8);
       spawnRing(particles, cx, feetY);
       shakeCamera(camera, 1.4);
+      audio?.play('land');
     }
     if (player.justDashed) {
       burstSparks(particles, cx, player.y + player.h / 2, player.dashDirX, player.dashDirY, 10);
+      audio?.play('dash');
     }
 
     // 残影按固定间隔发射：每步都发会把池子吃光，那是"看起来更炫"和"跑得动"的分界线
@@ -173,9 +178,11 @@ export function createPlayScene({ view, input, level = testbed, progress = null,
       if (ev.type === 'bounce') {
         burstBounce(particles, cx, feetY, 14);
         shakeCamera(camera, 3.5);
+        audio?.play('bounce');
       } else if (ev.type === 'portal') {
         spawnRipple(particles, cx, player.y + player.h / 2);
         shakeCamera(camera, 2.5);
+        audio?.play('portal');
       }
     }
 
@@ -184,6 +191,7 @@ export function createPlayScene({ view, input, level = testbed, progress = null,
       burstDeath(particles, cx, player.y + player.h / 2, 26);
       shakeCamera(camera, 11);
       respawnTimer = RESPAWN_DELAY;
+      audio?.play('death');
     }
 
     // 掉出世界 → 死亡。留一小段停顿让震动与爆散被看见，再复活。
@@ -206,6 +214,7 @@ export function createPlayScene({ view, input, level = testbed, progress = null,
     // 放在死亡处理之后，避免「同一帧既死又通关」这种边界情况下重复触发。
     if (!cleared && atExit(player, world)) {
       cleared = true;
+      audio?.play('clear');
       if (progress) progress.recordClear(level.id, Math.round(elapsed * 1000), deaths);
       if (onExit) onExit();
       return;

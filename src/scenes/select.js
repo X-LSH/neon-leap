@@ -10,7 +10,7 @@ import { formatTime } from '../game/progress.js';
 
 const COLS = 5;
 
-export function createSelectScene({ input, levels, progress, onPick }) {
+export function createSelectScene({ input, levels, progress, audio = null, onPick }) {
   const root = document.createElement('div');
   root.id = 'select-scene';
   Object.assign(root.style, {
@@ -161,33 +161,50 @@ export function createSelectScene({ input, levels, progress, onPick }) {
   function pick() {
     const lv = levels[cursor];
     if (!lv || !progress.isUnlocked(lv.index)) return;
+    audio?.play('ui');
     onPick(lv);
   }
 
+  function toggleMute() {
+    const muted = audio ? audio.toggleMute() : false;
+    progress.setMuted(muted);      // 静音属于"设置"，要持久化
+    updateHint();
+  }
+
   function onKey(e) {
+    // ★ 用户的第一次按键就是浏览器要求的「手势」——
+    //   AudioContext 在此之前一直处于 suspended 状态，不解锁就没有声音。
+    audio?.unlock();
+
     switch (e.code) {
       case 'ArrowLeft': e.preventDefault(); move(-1, 0); break;
       case 'ArrowRight': e.preventDefault(); move(1, 0); break;
       case 'ArrowUp': e.preventDefault(); move(0, -1); break;
       case 'ArrowDown': e.preventDefault(); move(0, 1); break;
       case 'Enter': case 'Space': case 'KeyZ': e.preventDefault(); pick(); break;
+      case 'KeyM': e.preventDefault(); toggleMute(); break;
       default: break;
     }
   }
 
   window.addEventListener('keydown', onKey);
 
+  /** 底部提示行。抽成函数是因为静音切换后要重绘它。 */
+  function updateHint() {
+    const total = progress.clearedCount();
+    const muteTag = audio && audio.muted ? '　🔇 已静音（M 切换）' : '';
+    const saveTag = progress.persistent ? '' : '　⚠ 存档不可用（隐私模式），本次进度不会保留';
+    hint.textContent =
+      `方向键选择 · Z / 回车进入　|　已通关 ${total} / ${levels.length}　累计死亡 ${progress.totalDeaths()}`
+      + muteTag + saveTag;
+  }
+
   return {
     init() {
       cursor = defaultCursor();
       buildCards();
       paint();
-
-      const total = progress.clearedCount();
-      const totalDeaths = progress.totalDeaths();
-      hint.textContent =
-        `方向键选择 · Z / 回车进入　|　已通关 ${total} / ${levels.length}　累计死亡 ${totalDeaths}` +
-        (progress.persistent ? '' : '　⚠ 存档不可用（隐私模式），本次进度不会保留');
+      updateHint();
       document.body.append(root);
     },
 
@@ -196,10 +213,7 @@ export function createSelectScene({ input, levels, progress, onPick }) {
       cursor = defaultCursor();
       buildCards();
       paint();
-      const total = progress.clearedCount();
-      hint.textContent =
-        `方向键选择 · Z / 回车进入　|　已通关 ${total} / ${levels.length}　累计死亡 ${progress.totalDeaths()}` +
-        (progress.persistent ? '' : '　⚠ 存档不可用（隐私模式），本次进度不会保留');
+      updateHint();
     },
 
     dispose() {

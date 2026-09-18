@@ -132,6 +132,32 @@ export function headBlocked(body, world) {
   return false;
 }
 
+/**
+ * 玩家是否已爬到**墙沿**：贴着墙，且头顶已经到达（或高于）墙顶。
+ *
+ * ★ 这是「翻越（mantle）」的触发条件 —— 也是**抓墙这个动词最容易漏掉的边界情形**。
+ *
+ * ⚠️ 判据必须用「头顶到达墙顶」，**不能用「脚下方没有墙」**。
+ *    后者要求玩家整个人升到墙顶之上才成立，而墙越高、玩家爬得越低，
+ *    这个条件就越晚满足 —— 我在 7 格高的墙上实测：它要玩家爬到 10.2 格，
+ *    而耐力只够爬到 13 格。**触发条件被设在了玩家够不到的地方**，翻越永远不触发。
+ *
+ * 用「头顶到达墙顶」则是玩家真正需要帮助的那一刻：
+ * 再往上爬一步墙就消失了，而那时他恰好悬在墙沿外侧。
+ */
+export function atLedge(body, dir, world) {
+  if (!touchingWall(body, dir, world)) return false;
+
+  const x = dir > 0 ? body.x + body.w + PROBE : body.x - PROBE;
+  const tx = Math.floor(x / TILE);
+
+  // 从玩家头部所在格向上找这面墙的顶端
+  let top = Math.floor((body.y + EPS) / TILE);
+  while (top > 0 && world.isSolid(tx, top - 1)) top -= 1;
+
+  return body.y <= top * TILE + 2;
+}
+
 /** 两轴 AABB 相交判定（用于危险物判定，Phase 2 使用）。 */
 export function overlaps(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;

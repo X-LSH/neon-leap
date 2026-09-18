@@ -19,6 +19,7 @@ function freshData() {
     version: SAVE_VERSION,
     cleared: {},                 // levelId → { bestMs, deaths }
     totals: { deaths: 0, cleared: 0 },
+    settings: { muted: false },
   };
 }
 
@@ -97,6 +98,17 @@ export function createProgress(levels) {
     reset() {
       data = freshData();
       store.clear();
+      persist();
+    },
+
+    /** 静音开关的持久化。它属于"设置"，不属于"进度"，清档时会一起归零。 */
+    isMuted() {
+      return !!(data.settings && data.settings.muted);
+    },
+
+    setMuted(v) {
+      if (!data.settings) data.settings = { muted: false };
+      data.settings.muted = !!v;
       persist();
     },
 

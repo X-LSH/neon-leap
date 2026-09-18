@@ -13,7 +13,7 @@
 
 import { CFG, PLAYER_W, PLAYER_H } from './config.js';
 import { approach } from '../core/loop.js';
-import { moveX, moveY, onGround, touchingWall } from './physics.js';
+import { moveX, moveY, onGround, touchingWall, atLedge } from './physics.js';
 
 export const STATE = {
   IDLE: 'idle',
@@ -50,12 +50,14 @@ export function createPlayer(x, y) {
 
     stamina: CFG.climbStamina,
     wallLock: 0,
+    mantleTimer: 0,
 
     dead: false,
     justLanded: false,
     justJumped: false,
     justDashed: false,
     justWallJumped: false,
+    justMantled: false,
   };
 }
 
@@ -93,11 +95,13 @@ export function updatePlayer(p, inp, world, dt, extraGround = null) {
   p.justJumped = false;
   p.justDashed = false;
   p.justWallJumped = false;
+  p.justMantled = false;
 
   if (p.dead) return;
 
   if (p.dashCd > 0) p.dashCd = Math.max(0, p.dashCd - dt);
   if (p.wallLock > 0) p.wallLock = Math.max(0, p.wallLock - dt);
+  if (p.mantleTimer > 0) p.mantleTimer = Math.max(0, p.mantleTimer - dt);
 
   // 跳跃缓冲记账放在最前面，这样冲刺冻结期内的预输入也不会丢。
   if (inp.jump.pressed) p.buffer = CFG.jumpBuffer;
@@ -146,7 +150,10 @@ export function updatePlayer(p, inp, world, dt, extraGround = null) {
     : (dirX === 0 ? CFG.airDecel : CFG.airAccel);
   p.vx = approach(p.vx, targetVx, accel * dt);
 
-  if (moveX(p, p.vx * dt, world) !== 0) p.vx = 0;
+  // 撞墙清零水平速度 —— **但翻越窗口内不清零**。
+  // 翻越时玩家朝墙冲，会被墙沿挡住；若在这里归零，它就永远移不到墙顶上方。
+  // 保留速度，等玩家升过墙顶后那点水平速度会自然生效。
+  if (moveX(p, p.vx * dt, world) !== 0 && p.mantleTimer <= 0) p.vx = 0;
 
   // ── 墙面感知
   p.wallDir = 0;
@@ -160,14 +167,27 @@ export function updatePlayer(p, inp, world, dt, extraGround = null) {
     && p.wallDir !== 0
     && p.stamina > 0
     && p.wallLock <= 0
+    && p.mantleTimer <= 0      // 翻越过程中不再抓墙
     && !p.grounded;
 
   if (climbing) {
-    p.stamina = Math.max(0, p.stamina - dt);
-    if (inp.moveY < 0) p.vy = -CFG.climbUpSpeed;
-    else if (inp.moveY > 0) p.vy = CFG.climbDownSpeed;
-    else p.vy = 0;
-    p.vx = 0;
+    // ★ 翻越（mantle）：向上爬时到达墙沿 → 自动翻上去。
+    //   必须在「还贴着墙、但脚下方已经没有墙」的这一刻介入 ——
+    //   等 touchingWall 自己变假就晚了，那时玩家已在下落，且恰好悬在墙沿外侧。
+    if (inp.moveY < 0 && atLedge(p, p.wallDir, world)) {
+      p.mantleTimer = CFG.mantleTime;
+      p.vy = CFG.mantleVy;
+      p.vx = p.wallDir * CFG.mantleVx;
+      p.grounded = false;
+      p.justJumped = true;
+      p.justMantled = true;      // 翻越有自己的音效，不该混进「起跳」
+    } else {
+      p.stamina = Math.max(0, p.stamina - dt);
+      if (inp.moveY < 0) p.vy = -CFG.climbUpSpeed;
+      else if (inp.moveY > 0) p.vy = CFG.climbDownSpeed;
+      else p.vy = 0;
+      p.vx = 0;
+    }
   }
 
   // ── 跳跃：墙跳优先于普通跳，两者共用同一个缓冲
@@ -203,17 +223,22 @@ export function updatePlayer(p, inp, world, dt, extraGround = null) {
   }
 
   // ── 重力：长按跳跃期间减半，这是可变跳跃高度的来源
-  const holding = p.jumpHeld > 0 && inp.jump.held && p.vy < 0;
-  p.vy += CFG.gravity * (holding ? 0.5 : 1) * dt;
+  //    ⚠️ 抓墙攀爬时必须**完全跳过重力**：climbing 分支每帧把 vy 设成 climbUpSpeed，
+  //    但紧接着重力又加回 13.3 u/s —— 标称 45 实际只有 31.7，
+  //    耐力 2.6 秒本该爬 7.8 格、实际只爬 5.5 格，玩家永远够不到高墙的顶。
+  if (!climbing) {
+    const holding = p.jumpHeld > 0 && inp.jump.held && p.vy < 0;
+    p.vy += CFG.gravity * (holding ? 0.5 : 1) * dt;
 
-  if (p.jumpHeld > 0) p.jumpHeld = Math.max(0, p.jumpHeld - dt);
-  if (p.vy >= 0) p.jumpHeld = 0;
+    if (p.jumpHeld > 0) p.jumpHeld = Math.max(0, p.jumpHeld - dt);
+    if (p.vy >= 0) p.jumpHeld = 0;
 
-  // 松键收力：上升速度按比例衰减（**倍率**而非绝对值 ——
-  // 绝对值截断会让短按变成固定的小跳，玩家失去对高度的表达权）
-  if (!inp.jump.held && p.jumpHeld > 0 && p.vy < 0) {
-    p.vy *= CFG.jumpCutMul;
-    p.jumpHeld = 0;
+    // 松键收力：上升速度按比例衰减（**倍率**而非绝对值 ——
+    // 绝对值截断会让短按变成固定的小跳，玩家失去对高度的表达权）
+    if (!inp.jump.held && p.jumpHeld > 0 && p.vy < 0) {
+      p.vy *= CFG.jumpCutMul;
+      p.jumpHeld = 0;
+    }
   }
 
   // ── 墙滑限速

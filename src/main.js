@@ -10,6 +10,7 @@
 import { createView } from './core/view.js';
 import { createLoop } from './core/loop.js';
 import { createInput } from './core/input.js';
+import { createAudio } from './core/audio.js';
 import { FIXED_DT, MAX_STEPS_PER_FRAME, VIEW_H } from './game/config.js';
 import { createProgress } from './game/progress.js';
 import { createSelectScene } from './scenes/select.js';
@@ -20,6 +21,7 @@ const canvas = document.getElementById('screen');
 const view = createView(canvas, { viewHeight: VIEW_H });
 const input = createInput(window);
 const progress = createProgress(LEVELS);
+const audio = createAudio({ muted: progress.isMuted() });
 
 let scene = null;
 
@@ -34,6 +36,7 @@ function gotoSelect() {
     input,
     levels: LEVELS,
     progress,
+    audio,
     onPick: (level) => gotoPlay(level),
   }));
 }
@@ -44,6 +47,7 @@ function gotoPlay(level) {
     input,
     level,
     progress,
+    audio,
     onExit: gotoSelect,
   }));
 }
