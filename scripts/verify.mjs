@@ -27,7 +27,9 @@ import {
   createParticles, updateParticles, liveCount, clearParticles,
   spawnGhost, spawnRing, burstDust,
 } from '../src/game/particles.js';
+import { playPolicy } from '../src/game/replay.js';
 import testbed from '../src/levels/testbed.js';
+import { LEVELS } from '../src/levels/index.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -448,6 +450,37 @@ section('粒子系统');
 
   clearParticles(q);
   ok('clear 之后没有存活粒子', liveCount(q) === 0);
+}
+
+// ── 8. 关卡可解性
+// 平台跳跃的状态空间是连续的，没法 BFS 证明有解。
+// 这里的定义是：**存在一条确定性策略能通关**。
+// 每关的 solution 就是那条路径的构造性证明 —— 任一关跑不通，这条断言就会红。
+section('关卡可解性');
+{
+  ok('至少有一关配了策略', LEVELS.length > 0, `${LEVELS.length} 关`);
+
+  for (const level of LEVELS) {
+    const tag = `${String(level.index).padStart(2, '0')} ${level.name}`;
+    if (typeof level.solution !== 'function') {
+      ok(`${tag} 配了可解性策略`, false, '缺少 solution 函数');
+      continue;
+    }
+    const w = createWorld(level);
+    const r = playPolicy(w, level.solution);
+    ok(`${tag} 可通关`, r.ok, r.ok ? `${r.timeSec.toFixed(2)}s` : `${r.reason}`);
+  }
+
+  // 关卡数据的通用体检：这些错误不会让关卡"不可解"，但会让它变得糟糕
+  for (const level of LEVELS) {
+    const w = createWorld(level);
+    const tag = `${String(level.index).padStart(2, '0')}`;
+    const widths = new Set(level.tiles.map((r) => r.length));
+    ok(`${tag} 所有行等宽`, widths.size === 1, `宽度 ${[...widths].join(',')}`);
+    ok(`${tag} spawn 不落在实心块内`, !w.isSolid(level.spawn.x, level.spawn.y));
+    ok(`${tag} spawn 下方是实心`, w.isSolid(level.spawn.x, level.spawn.y + 1));
+    ok(`${tag} 有唯一出口`, !!w.exit);
+  }
 }
 
 // ── 结果

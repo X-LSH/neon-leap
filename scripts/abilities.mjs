@@ -100,12 +100,24 @@ record('原地水平冲刺（含滑行）', cells(Math.abs(probeTravel({
   frames: 90,
 }))));
 
-record('满速助跑跳（滞空水平覆盖）', cells(Math.abs(probeTravel({
-  world: FLAT, spawn: spawnGround,
-  preFrames: 60, preInput: mix({ moveX: 1 }),
-  inputFor: (i) => mix({ moveX: 1, jump: { held: i < HOLD_FRAMES, pressed: i === 0 } }),
-  frames: 60,
-}))));
+// 满速助跑跳：必须测「起跳 → 落地」的真实滞空位移。
+// 早先版本测的是「固定 0.5 秒内的位移」—— 而实际滞空只有 0.4 秒，
+// 多出来的那 0.1 秒是落地之后的跑动。结果把 4.4 格报成了 5.5 格，
+// 直接导致按错误标尺设计的关卡在实测中「差半格掉下去」。
+{
+  const p = createPlayer(spawnGround.x, spawnGround.y);
+  for (let i = 0; i < 60; i++) updatePlayer(p, mix({ moveX: 1 }), FLAT, FIXED_DT);
+
+  const x0 = p.x;
+  let airFrames = 0;
+  let leftGround = false;
+  for (let i = 0; i < 300; i++) {
+    updatePlayer(p, mix({ moveX: 1, jump: { held: i < HOLD_FRAMES, pressed: i === 0 } }), FLAT, FIXED_DT);
+    if (!p.grounded) { leftGround = true; airFrames += 1; }
+    else if (leftGround && i > 1) break;
+  }
+  record('满速助跑跳（起跳→落地）', cells(p.x - x0), `滞空 ${(airFrames * FIXED_DT).toFixed(2)}s`);
+}
 
 // ── 靠墙：垂直能力（「特别高的障碍物」的关键） ────────────────
 const WALL_TX = 10;
