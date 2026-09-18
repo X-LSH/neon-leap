@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 import { CFG, TILE, PLAYER_W, PLAYER_H, FIXED_DT, JUMP_APEX, DASH_REACH, CLIMB_REACH } from '../src/game/config.js';
-import { moveX, moveY } from '../src/game/physics.js';
+import { moveX, moveY, touchingWall } from '../src/game/physics.js';
 import { createPlayer, updatePlayer } from '../src/game/player.js';
 import { createWorld } from '../src/game/world.js';
 import testbed from '../src/levels/testbed.js';
@@ -181,6 +181,25 @@ section('玩家状态机');
   ok('冲刺消耗次数', pDash.dashesLeft === 0);
   updatePlayer(pDash, { ...idle, dash: { held: false, pressed: true } }, world, FIXED_DT);
   ok('次数用尽后无法再次冲刺', pDash.dashesLeft === 0 && pDash.dashTimer === 0);
+
+  // ★ 墙跳必须重置空中机动。
+  // 少了这一条，「贴墙」会退化成劣势：单面墙爬到力竭只有 3.9 格，
+  // 反而低于空手组合的 7.0 格。这三条断言就是那条设计决策的守卫。
+  {
+    const wallWorld = { isSolid: (tx, ty) => tx >= 10 || ty >= 20 };
+    const pWall = createPlayer(10 * TILE - PLAYER_W - 0.5, groundY - 60);
+    pWall.grounded = false;
+    pWall.dashesLeft = 0;
+    pWall.stamina = 0.15;
+
+    const touchingBefore = touchingWall(pWall, 1, wallWorld);
+    updatePlayer(pWall, { ...idle, jump: { held: true, pressed: true } }, wallWorld, FIXED_DT);
+
+    ok('前置条件：玩家确实贴着墙', touchingBefore);
+    ok('墙跳重置冲刺次数', pWall.dashesLeft === 1, `dashesLeft=${pWall.dashesLeft}`);
+    ok('墙跳重置抓墙耐力', pWall.stamina === CFG.climbStamina, `stamina=${pWall.stamina.toFixed(2)}`);
+    ok('墙跳产生向上速度并弹离墙面', pWall.vy < 0 && pWall.vx < 0, `vx=${pWall.vx.toFixed(0)} vy=${pWall.vy.toFixed(0)}`);
+  }
 
   // 确定性：相同输入序列必须得到完全相同的结果
   const runOnce = () => {

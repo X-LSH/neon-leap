@@ -61,10 +61,9 @@ export const CFG = {
   wallJumpLock: 0.12,   // s    墙跳后水平输入锁定（防止立刻贴回）
 
   // ── 抓墙攀爬
-  climbStamina: 1.10,   // s    抓墙总耐力
+  climbStamina: 1.10,   // s    抓墙耐力（限制**单次**攀爬窗口；墙跳会立刻回满，见 player.js）
   climbUpSpeed: 45,     // u/s  向上攀爬速度
   climbDownSpeed: 80,   // u/s  向下攀爬速度
-  climbJumpCost: 0.28,  // s    攀爬中跳跃的耐力消耗
 
   // ── 其他
   floorSnap: 1.0,       // u    地面探测容差（防高速穿透）

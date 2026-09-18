@@ -168,7 +168,14 @@ export function updatePlayer(p, inp, world, dt) {
       p.vy = CFG.wallJumpVy;
       p.facing = away;
       p.wallLock = CFG.wallJumpLock;
-      p.stamina = Math.max(0, p.stamina - CFG.climbJumpCost);
+
+      // ★ 墙跳重置空中机动（Celeste 规则，不可删）。
+      // 没有这一条，「贴墙」会退化成劣势：单面墙跳到力竭只能爬 3.9 格，
+      // 反而低于空手组合的 7.0 格 —— 贴着墙比不贴还差，反直觉且违背直觉优先级。
+      // 重置之后，贴墙能爬多高由「墙有多高」决定，而不是由耐力上限决定。
+      p.dashesLeft = 1;
+      p.stamina = CFG.climbStamina;
+
       p.jumpHeld = CFG.jumpHoldMax;
       p.buffer = 0;
       p.coyote = 0;
