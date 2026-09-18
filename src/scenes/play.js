@@ -5,7 +5,7 @@
  *   背景网格 → 地形 → 机关 → 粒子（残影在下、火花在上）→ 玩家 → 出口 → HUD(DOM)
  */
 
-import { TILE } from '../game/config.js';
+import { TILE, CFG } from '../game/config.js';
 import { createWorld } from '../game/world.js';
 import { createPlayer, updatePlayer, killPlayer, respawnPlayer, interpolated } from '../game/player.js';
 import { createCamera, updateCamera, snapCamera, shakeCamera } from '../game/camera.js';
@@ -348,16 +348,30 @@ export function createPlayScene({ view, input }) {
       return;
     }
 
-    glowStroke(ctx, PAL.player, polyPath([
+    // 攀爬时的耐力反馈：颜色随耐力衰减，低于 30% 开始闪烁。
+    // 没有这个，玩家爬到一半掉下去会完全不知道为什么 ——
+    // 这是「死亡必可归因」在视觉层的延伸：坠落的原因必须**看得见**。
+    let glowColor = PAL.player;
+    let coreColor = PAL.playerCore;
+    if (player.state === 'climb') {
+      const ratio = player.stamina / CFG.climbStamina;
+      if (ratio < 0.3) {
+        const blink = Math.sin(elapsed * 30) > 0;
+        glowColor = blink ? PAL.danger : PAL.player;
+        coreColor = blink ? PAL.dangerCore : PAL.playerCore;
+      }
+    }
+
+    glowStroke(ctx, glowColor, polyPath([
       [cx, pos.y],
       [pos.x + player.w, cy],
       [cx, pos.y + player.h],
       [pos.x, cy],
-    ]), { core: PAL.playerCore, layers: PLAYER_GLOW });
+    ]), { core: coreColor, layers: PLAYER_GLOW });
 
     // 朝向指示：面朝方向一个小三角，让「我在往哪走」一眼可见
     const f = player.facing;
-    glowStroke(ctx, PAL.player, (c) => {
+    glowStroke(ctx, glowColor, (c) => {
       c.beginPath();
       c.moveTo(cx + f * 1.5, cy);
       c.lineTo(cx - f * 2.5, cy - 2);
