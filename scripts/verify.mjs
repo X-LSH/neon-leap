@@ -28,6 +28,9 @@ import {
   spawnGhost, spawnRing, burstDust,
 } from '../src/game/particles.js';
 import { playPolicy } from '../src/game/replay.js';
+import { createInput } from '../src/core/input.js';
+import { stickDirection, trackStick, STICK_FOLLOW } from '../src/core/stick.js';
+import { isTouchActive, prefersCoarsePointer } from '../src/core/touch.js';
 import testbed from '../src/levels/testbed.js';
 import { LEVELS } from '../src/levels/index.js';
 
@@ -487,6 +490,102 @@ section('关卡可解性');
       !w.exit || w.isSolid(w.exit.tx, w.exit.ty + 1),
       w.exit ? `出口 (${w.exit.tx},${w.exit.ty})` : '无出口');
   }
+}
+
+// ── 9. 触屏与输入层
+// 触屏最容易出错的两件事 —— 摇杆的 45° 扇区边界、动作键的边沿语义 —— 都是纯逻辑。
+// 所以它们必须在这里被问清楚：在真机上，这两类 bug 要靠手指恰好停在边界上才复现，
+// 属于「偶发、难拍、说不清」的那种，等用户报上来就太晚了。
+// 浏览器端只负责证明「事件确实接上了」（见 e2e.mjs）——分工不重叠。
+section('触屏与输入层');
+{
+  const dirAt = (deg, r = 40) => stickDirection(
+    Math.cos((deg * Math.PI) / 180) * r,
+    Math.sin((deg * Math.PI) / 180) * r,
+  );
+  const eq = (a, b) => a[0] === b[0] && a[1] === b[1];
+
+  // 屏幕 y 轴向下为正，所以 90° 是「下」而不是「上」——这是最容易反的一处
+  ok('摇杆 0° 正右', eq(dirAt(0), [1, 0]), JSON.stringify(dirAt(0)));
+  ok('摇杆 90° 正下（屏幕坐标 y 向下）', eq(dirAt(90), [0, 1]), JSON.stringify(dirAt(90)));
+  ok('摇杆 180° 正左', eq(dirAt(180), [-1, 0]), JSON.stringify(dirAt(180)));
+  ok('摇杆 270° 正上', eq(dirAt(270), [0, -1]), JSON.stringify(dirAt(270)));
+  ok('摇杆 45° 右下（斜向）', eq(dirAt(45), [1, 1]), JSON.stringify(dirAt(45)));
+  ok('摇杆 135° 左下（斜向）', eq(dirAt(135), [-1, 1]), JSON.stringify(dirAt(135)));
+  ok('摇杆 225° 左上（斜向）', eq(dirAt(225), [-1, -1]), JSON.stringify(dirAt(225)));
+  ok('摇杆 315° 右上（斜向）', eq(dirAt(315), [1, -1]), JSON.stringify(dirAt(315)));
+
+  // 45° 的边界：22.5° 是「正右」与「右下」的分界
+  ok('22.4° 仍判为正右（边界内侧）', eq(dirAt(22.4), [1, 0]), JSON.stringify(dirAt(22.4)));
+  ok('22.6° 已判为右下（边界外侧）', eq(dirAt(22.6), [1, 1]), JSON.stringify(dirAt(22.6)));
+
+  // 死区：低于阈值必须是「没有输入」，否则手指静止时的微抖会让角色原地抽动
+  ok('死区内不出方向', eq(dirAt(0, 11), [0, 0]), JSON.stringify(dirAt(0, 11)));
+  ok('刚出死区即出方向', eq(dirAt(0, 13), [1, 0]), JSON.stringify(dirAt(0, 13)));
+  ok('死区判据用的是半径不是分量（斜向不误触）', eq(dirAt(45, 11), [0, 0]));
+
+  // 输出必须只有 -1 / 0 / 1 —— 有任何小数都会让 moveX 变成非整数，物理层会静默走偏
+  let onlyUnit = true;
+  for (let deg = 0; deg < 360; deg += 3) {
+    for (const r of [13, 30, 46, 120]) {
+      const [x, y] = dirAt(deg, r);
+      if (![-1, 0, 1].includes(x) || ![-1, 0, 1].includes(y)) onlyUnit = false;
+    }
+  }
+  ok('任意角度/半径只输出 -1 / 0 / 1', onlyUnit);
+
+  // 动态重定位：手指滑到区域边缘仍必须推得出满偏
+  const origin = { x: 0, y: 0 };
+  const far = stickDirection(400, 0);
+  const tracked = trackStick(origin, 400, 0);
+  ok('手指拖到天边，方向依然满偏（不会因为超界而失效）', eq(tracked, [1, 0]) && eq(far, [1, 0]));
+  ok('重定位后原点被推到手指身后', Math.abs(origin.x - (400 - STICK_FOLLOW)) < 0.01,
+    `origin.x=${origin.x.toFixed(1)}（期望 ${400 - STICK_FOLLOW}）`);
+  ok('原点不会跑到手指前面去', origin.x < 400, `origin.x=${origin.x}`);
+  ok('重定位后仍在死区之外（否则满偏会掉成零输入）',
+    Math.hypot(400 - origin.x, 0 - origin.y) >= 12);
+
+  // 原点逼近后再拖回来，方向应当反向 —— 这是「回到死区」的正例
+  ok('回拖到原点附近即归零', eq(trackStick(origin, origin.x, origin.y), [0, 0]));
+
+  // ── 输入层：触屏与键盘写同一份状态
+  // 用一个假的 target 就能在 Node 里跑完整语义（input.js 不依赖真正的 DOM）。
+  const stub = { addEventListener() {}, removeEventListener() {} };
+  const inp = createInput(stub);
+
+  inp.setAction('jump', true);
+  const edgeA = inp.intent();
+  inp.endStep();                              // 物理步消费掉这次边沿
+  inp.setAction('jump', true);                // 手指还按着，DOM 仍可能再送一次 down
+  const edgeB = inp.intent();
+  inp.setAction('jump', false);
+  inp.setAction('jump', true);
+  const edgeC = inp.intent();
+
+  ok('触屏按下产生一次边沿', edgeA.jump.pressed === true && edgeA.jump.held === true);
+  ok('按住期间重复 down 不产生新边沿（对应键盘的 e.repeat 抑制）',
+    edgeB.jump.pressed === false && edgeB.jump.held === true);
+  ok('抬起后再按下产生新边沿', edgeC.jump.pressed === true);
+
+  inp.setAction('left', true);
+  inp.setAction('right', true);
+  ok('摇杆左右同按 → moveX 归零（不会变成 2）', inp.intent().moveX === 0);
+  inp.setAction('left', false);
+  ok('松开一侧 → moveX 为 1', inp.intent().moveX === 1);
+
+  inp.setAction('grab', true);
+  ok('抓墙是 held 语义（需要一直按住）', inp.intent().grab.held === true);
+  inp.setAction('grab', false);
+  ok('松开抓墙即释放', inp.intent().grab.held === false);
+
+  const before = JSON.stringify(inp.intent());
+  inp.setAction('不存在的动作', true);
+  ok('未知动作不会污染状态', JSON.stringify(inp.intent()) === before);
+
+  // 触屏模块必须能在没有 window / document 的环境里被 import ——
+  // 这正是 game/ 层可测的前提，触屏层不能破坏它。
+  ok('触屏检测可在无 DOM 环境加载', typeof isTouchActive() === 'boolean');
+  ok('无 DOM 环境下判定为「非触屏」而不是抛错', isTouchActive() === false && prefersCoarsePointer() === false);
 }
 
 // ── 结果

@@ -7,10 +7,24 @@
  */
 
 import { formatTime } from '../game/progress.js';
+import { isTouchActive, onTouchActivate } from '../core/touch.js';
 
-const COLS = 5;
+const COLS_WIDE = 5;
+const COLS_NARROW = 3;
+
+/**
+ * 网格列数按视口宽度降级。
+ *
+ * 写死 5 列 132px = 700px 宽，在横屏手机（844px）里正好，但竖屏（390px）
+ * 会把右边三列直接切掉 —— 手机上打不开选关就等于打不开游戏。
+ * 降到 3 列后卡片仍有 ~100px，中文不至于挤成一团。
+ */
+function columnsFor(width) {
+  return width < 620 ? COLS_NARROW : COLS_WIDE;
+}
 
 export function createSelectScene({ input, levels, progress, audio = null, onPick }) {
+  let COLS = columnsFor(window.innerWidth);
   const root = document.createElement('div');
   root.id = 'select-scene';
   Object.assign(root.style, {
@@ -49,9 +63,19 @@ export function createSelectScene({ input, levels, progress, audio = null, onPic
   const grid = document.createElement('div');
   Object.assign(grid.style, {
     display: 'grid',
-    gridTemplateColumns: `repeat(${COLS}, 132px)`,
     gap: '10px',
+    width: '100%',
+    // minmax(0, …) 而不是固定 132px：列宽可以被压缩，窄屏才不会横向溢出
+    gridTemplateColumns: `repeat(${COLS}, minmax(0, 132px))`,
+    justifyContent: 'center',
+    maxWidth: `${COLS_WIDE * 132 + (COLS_WIDE - 1) * 10}px`,
   });
+
+  /** 视口宽度变化时重排列数。列数变了必须重建卡片 —— 换行位置决定方向键的上下移动。 */
+  function applyColumns() {
+    grid.style.gridTemplateColumns = `repeat(${COLS}, minmax(0, 132px))`;
+    grid.style.maxWidth = `${COLS * 132 + (COLS - 1) * 10}px`;
+  }
 
   const hint = document.createElement('div');
   Object.assign(hint.style, {
@@ -124,6 +148,19 @@ export function createSelectScene({ input, levels, progress, audio = null, onPic
       card.append(idx, name, meta);
       grid.append(card);
       cards.push(card);
+
+      // 触屏没有方向键，轻触即进入。桌面端顺带白得鼠标点击 ——
+      // 同一份代码覆盖两种设备，而不是给触屏另写一套选关界面。
+      card.style.cursor = 'pointer';
+      card.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        // 先移焦点再尝试进入：点到锁定关卡时，
+        // 副标题会变成「通关上一关以解锁」—— 点了没反应是最差的反馈。
+        cursor = i;
+        paint();
+        audio?.unlock();     // 手指按下同样是浏览器要求的「手势」
+        pick();
+      });
     });
   }
 
@@ -189,13 +226,19 @@ export function createSelectScene({ input, levels, progress, audio = null, onPic
 
   window.addEventListener('keydown', onKey);
 
+  // 触屏可能在本场景存活期间才被检测到（第一次真实触摸），届时操作提示要跟着换。
+  const offTouch = onTouchActivate(updateHint);
+
   /** 底部提示行。抽成函数是因为静音切换后要重绘它。 */
   function updateHint() {
     const total = progress.clearedCount();
-    const muteTag = audio && audio.muted ? '　🔇 已静音（M 切换）' : '';
+    const touch = isTouchActive();
+    // 讲「按 M 切换」而机器上没有 M 键，是最没用的那种帮助。
+    const muteTag = audio && audio.muted ? (touch ? '　🔇 已静音' : '　🔇 已静音（M 切换）') : '';
     const saveTag = progress.persistent ? '' : '　⚠ 存档不可用（隐私模式），本次进度不会保留';
     hint.textContent =
-      `方向键选择 · Z / 回车进入　|　已通关 ${total} / ${levels.length}　累计死亡 ${progress.totalDeaths()}`
+      `${touch ? '轻触卡片进入' : '方向键选择 · Z / 回车进入'}`
+      + `　|　已通关 ${total} / ${levels.length}　累计死亡 ${progress.totalDeaths()}`
       + muteTag + saveTag;
   }
 
@@ -218,6 +261,7 @@ export function createSelectScene({ input, levels, progress, audio = null, onPic
 
     dispose() {
       window.removeEventListener('keydown', onKey);
+      offTouch();
       root.remove();
     },
 
@@ -225,6 +269,13 @@ export function createSelectScene({ input, levels, progress, audio = null, onPic
     render() {},
     handleEvents() {},
     setFps() {},
-    onResize() {},
+    onResize() {
+      const next = columnsFor(window.innerWidth);
+      if (next === COLS) return;
+      COLS = next;
+      applyColumns();
+      buildCards();
+      paint();
+    },
   };
 }

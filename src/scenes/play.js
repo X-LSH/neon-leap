@@ -21,6 +21,7 @@ import { drawBackdrop } from '../render/backdrop.js';
 import { drawEntities } from '../render/entities.js';
 import { drawParticles } from '../render/particles.js';
 import { createHud } from '../render/hud.js';
+import { createTouchControls, isTouchActive, onTouchActivate } from '../core/touch.js';
 import { PAL } from '../render/palette.js';
 import { glowStroke, polyPath, circlePath } from '../render/draw.js';
 import testbed from '../levels/testbed.js';
@@ -112,6 +113,9 @@ export function createPlayScene({ view, input, level = testbed, progress = null,
       else if (e === 'toggleDebug') hud.toggleDebug();
       else if (e === 'nextAnchor') jumpAnchor(1);
       else if (e === 'prevAnchor') jumpAnchor(-1);
+      // 退出本关。此前 Esc 被 input 映射成 'pause' 却无人消费 ——
+      // 结果就是「进了关只能靠通关出去」，桌面上也一样。触屏更是死路。
+      else if (e === 'pause') { if (onExit) onExit(); }
     }
   }
 
@@ -429,9 +433,42 @@ export function createPlayScene({ view, input, level = testbed, progress = null,
     drawPlayer(alpha);
   }
 
+  // ── 触屏层 ────────────────────────────────────────────────────────
+  // 只在触屏环境挂载。桌面端 DOM 里**一行都不会出现** ——
+  // 这是规格 §7.3 的硬要求，也是 e2e 里专门看守的一条。
+  let touchLayer = null;
+  let offTouch = null;
+
+  function syncTouch() {
+    if (isTouchActive() && !touchLayer) {
+      touchLayer = createTouchControls({
+        input,
+        muted: audio ? audio.muted : false,
+        onBack: () => { if (onExit) onExit(); },
+        onRestart: restart,
+        onToggleMute: () => {
+          const next = audio ? audio.toggleMute() : false;
+          if (progress) progress.setMuted(next);   // 静音属于「设置」，要持久化
+          return next;
+        },
+      });
+      document.body.append(touchLayer.root);
+    } else if (!isTouchActive() && touchLayer) {
+      touchLayer.dispose();
+      touchLayer = null;
+    }
+  }
+
   return {
     init() {
       snapCamera(camera, player, view, world);
+      // 首次触摸随时可能发生（媒体查询可能一开始是 false），所以订阅而不是只判一次
+      offTouch = onTouchActivate(syncTouch);
+      syncTouch();
+    },
+    dispose() {
+      if (offTouch) { offTouch(); offTouch = null; }
+      if (touchLayer) { touchLayer.dispose(); touchLayer = null; }
     },
     update,
     render,

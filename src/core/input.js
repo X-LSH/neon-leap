@@ -103,6 +103,27 @@ export function createInput(target = window) {
     if (pending.grab > 0) pending.grab -= 1;
   }
 
+  /**
+   * 触屏专用入口：把一个动作置为按下 / 抬起。
+   *
+   * 语义与 keydown / keyup **完全一致** —— 边沿只在「从抬起到按下」的那一次计一次，
+   * 重复的 down 不重复计数（对应键盘的 e.repeat 抑制）。
+   *
+   * 关键点：触屏写的是**同一份** held / pending。
+   * 所以 intent() 不用改、游戏逻辑一行都不用动 ——
+   * 「游戏永远不知道输入来自键盘还是手指」这条约定，靠的就是这里。
+   */
+  function setAction(action, down) {
+    if (!(action in held)) return;
+    if (down) {
+      if (held[action]) return;
+      held[action] = true;
+      if (action in pending) pending[action] += 1;
+    } else {
+      held[action] = false;
+    }
+  }
+
   /** 取走并清空场景级事件。 */
   function takeEvents() {
     if (events.length === 0) return events;
@@ -117,5 +138,5 @@ export function createInput(target = window) {
     target.removeEventListener('blur', onBlur);
   }
 
-  return { intent, endStep, takeEvents, dispose, held };
+  return { intent, endStep, takeEvents, setAction, dispose, held };
 }

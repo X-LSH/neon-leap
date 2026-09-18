@@ -48,6 +48,11 @@
     pointer-events: none;
   }
   #hint em { color: var(--player); font-style: normal; }
+
+  /* 触屏环境：键盘图例讲的是用不上的键位，调试面板是一大块关不掉的开发信息
+     （F1 在手机上不存在）。两者都只是在挤占本来就紧张的手机屏幕。 */
+  body.touch-ui #hint,
+  body.touch-ui #debug { display: none; }
 </style>
 </head>
 <body>

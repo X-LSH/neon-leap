@@ -210,6 +210,20 @@ async function main() {
   ok('按 Z 后进入游戏场景', inGame === true);
   ok('游戏画面已出现', !!(await evaluate(`document.getElementById('screen')`)));
 
+  // 桌面端零泄漏：键盘环境下一行触屏 DOM 都不该出现，
+  // 键盘图例与调试面板也必须保持可见（它们在手机上才是噪音）。
+  const desktopShell = await evaluate(`({
+    layer: !!document.getElementById('touch-layer'),
+    cls: document.body.classList.contains('touch-ui'),
+    hint: getComputedStyle(document.getElementById('hint')).display,
+    debug: getComputedStyle(document.getElementById('debug')).display,
+  })`);
+  ok('桌面端不出现触屏控件（无泄漏）',
+    desktopShell.layer === false && desktopShell.cls === false, JSON.stringify(desktopShell));
+  ok('桌面端键盘图例与调试面板正常显示',
+    desktopShell.hint !== 'none' && desktopShell.debug !== 'none',
+    `hint=${desktopShell.hint} debug=${desktopShell.debug}`);
+
   // ── 渲染非空白：统计画布上的不同颜色数
   const colors = await evaluate(`(() => {
     const cv = document.getElementById('screen');
@@ -358,6 +372,228 @@ async function main() {
   await shot('05-mobile');
   ok('窄屏无横向溢出', mobile.scrollW <= mobile.innerW, `${mobile.scrollW} vs ${mobile.innerW}`);
   ok('画布自适应窄屏', mobile.canvasW > 0 && mobile.canvasW <= mobile.innerW, `canvas=${mobile.canvasW}`);
+
+  // ── 触屏：真实触摸事件，不是「假装触摸」
+  // CDP 的 Input.dispatchTouchEvent 会走完整输入管线，Chrome 据此合成
+  // pointerdown/move/up（pointerType=touch，pointerId 真实、可 setPointerCapture）。
+  // 这一点是先写探针实测确认的（.tmp/probe-touch.mjs），不是照文档猜的 ——
+  // 如果它不合成 PointerEvent，整个触屏实现方式都得换。
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  await send('Emulation.setEmitTouchEventsForMouse', { enabled: true, configuration: 'mobile' });
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 844, height: 390, deviceScaleFactor: 2, mobile: true,
+  });
+  // 媒体查询在页面加载时求值，所以必须重载一次
+  await send('Page.navigate', { url: BASE });
+  await sleep(2600);
+
+  const touchEnv = await evaluate(`({
+    coarse: matchMedia('(pointer: coarse)').matches,
+    shell: document.body.classList.contains('touch-ui'),
+    hintHidden: getComputedStyle(document.getElementById('hint')).display === 'none',
+    debugHidden: getComputedStyle(document.getElementById('debug')).display === 'none',
+    layerInSelect: !!document.getElementById('touch-layer'),
+    pickHint: (document.getElementById('select-scene') || {}).textContent || '',
+  })`);
+  ok('触摸仿真下 (pointer: coarse) 成立', touchEnv.coarse === true);
+  ok('触屏外壳标记已挂上（键盘图例与调试面板随之隐藏）', touchEnv.shell === true);
+  ok('键盘图例在触屏下隐藏', touchEnv.hintHidden === true);
+  ok('调试面板在触屏下隐藏（手机上没有 F1 可关）', touchEnv.debugHidden === true);
+  ok('关卡选择场景不挂触屏控件（它只需要点击）', touchEnv.layerInSelect === false);
+  ok('操作提示切换为触屏文案', touchEnv.pickHint.includes('轻触卡片进入'));
+  await shot('10-touch-select');
+
+  const rectOf = (selector) => evaluate(`(() => {
+    const el = ${selector};
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+
+  const tap = async (x, y, id = 1) => {
+    await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id }] });
+    await sleep(60);
+    await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+
+  // 手机上没有方向键，选关必须能点
+  const cardAt = await rectOf(`document.querySelectorAll('#select-scene div[style*="border-radius: 6px"]')[0]`);
+  ok('定位到第一张关卡卡片', !!cardAt, JSON.stringify(cardAt));
+  await tap(cardAt.x, cardAt.y);
+  await sleep(900);
+
+  const inGameTouch = await evaluate(`!document.getElementById('select-scene')`);
+  ok('轻触卡片即进入关卡（触屏可进游戏）', inGameTouch === true);
+
+  const layer = await evaluate(`(() => {
+    const el = document.getElementById('touch-layer');
+    if (!el) return null;
+    return [...el.querySelectorAll('button')].map((b) => b.textContent);
+  })()`);
+  ok('进入关卡后出现触屏控件', Array.isArray(layer), layer ? layer.join(' / ') : '未找到');
+  ok('三颗动作键齐全', !!layer && ['跳', '冲', '抓'].every((l) => layer.includes(l)));
+  ok('系统键齐全（返回 / 重开）', !!layer && ['返回', '重开'].every((l) => layer.includes(l)));
+  await shot('11-touch-play');
+
+  // ── 触屏按键的几何体检
+  // 「DOM 里有这颗按钮」和「手指点得到它」是两件事：
+  // 按钮可能被挤出屏幕、被 HUD 盖住、或者和邻居重叠到无法区分。
+  // 这些错误在桌面端永远暴露不出来，在手机上却是致命的。
+  const geom = await evaluate(`(() => {
+    const btns = [...document.querySelectorAll('#touch-layer button')];
+    return btns.map((b) => {
+      const r = b.getBoundingClientRect();
+      return {
+        label: b.textContent,
+        x: Math.round(r.left), y: Math.round(r.top),
+        w: Math.round(r.width), h: Math.round(r.height),
+        onScreen: r.left >= -0.5 && r.top >= -0.5
+          && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5,
+        topmost: document.elementFromPoint(
+          Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)) === b,
+      };
+    });
+  })()`);
+  const actions = geom.filter((g) => ['跳', '冲', '抓'].includes(g.label));
+  ok('所有触屏按键完整落在视口内（没有一半在屏幕外）',
+    geom.every((g) => g.onScreen),
+    geom.filter((g) => !g.onScreen).map((g) => g.label).join(',') || `${geom.length} 颗全在内`);
+  ok('每个按键都是该点最上层元素（不会被盖住而点不到）',
+    geom.every((g) => g.topmost),
+    geom.filter((g) => !g.topmost).map((g) => g.label).join(',') || '全部可点');
+  ok('动作键可点尺寸均 ≥ 44px（触屏最小触摸目标）',
+    actions.length === 3 && actions.every((g) => g.w >= 44 && g.h >= 44),
+    actions.map((g) => `${g.label} ${g.w}×${g.h}`).join(' / '));
+  {
+    const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    let bad = '';
+    for (let i = 0; i < actions.length; i++) {
+      for (let j = i + 1; j < actions.length; j++) {
+        if (hit(actions[i], actions[j])) bad += `${actions[i].label}×${actions[j].label} `;
+      }
+    }
+    ok('三颗动作键互不重叠（一次触摸只有一个解释）', bad === '', bad);
+  }
+
+  // ── 摇杆：推向右 → 角色跑起来
+  const sx = 170;
+  const sy = 210;
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: sx, y: sy, id: 11 }] });
+  await sleep(60);
+  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: sx + 60, y: sy, id: 11 }] });
+  await sleep(520);
+  const stickRun = parseVelocity(await readStats());
+  const stickDebug = parseDebug(await readDebug());
+  await shot('12-touch-run');
+  ok('摇杆右推 → 角色向右跑', stickRun && stickRun.vx >= 100, `vx=${stickRun?.vx}`);
+  ok('触屏也能进入 run 状态', stickDebug.state === 'run', `state=${stickDebug.state}`);
+
+  // ── 动态重定位：拖到极远 → 原点跟上；再拖回原点位置 → 输入必须归零
+  // 这两条合起来才证明「原点跟随」真的在工作：
+  // 只测「拖得远仍有速度」是测不出来的（方向没变，本来就有速度）。
+  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: sx + 600, y: sy, id: 11 }] });
+  await sleep(260);
+  const farVx = parseVelocity(await readStats())?.vx ?? 0;
+
+  // 手指已经滑出左半屏 —— 指针捕获必须把它留住，否则这里会直接归零
+  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: sx + 600 - 46, y: sy, id: 11 }] });
+  await sleep(420);
+  const pulledBackVx = parseVelocity(await readStats())?.vx ?? 0;
+
+  ok('手指滑出摇杆区域仍保持满偏（指针捕获生效）', farVx >= 100, `vx=${farVx}`);
+  ok('跟随之后拖回原点 → 输入归零（动态重定位生效）',
+    Math.abs(pulledBackVx) <= 30, `vx=${pulledBackVx}`);
+
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(300);
+
+  /** 等到落地再操作 —— 空中按跳会被当成空气跳，断言就变成掷骰子。 */
+  const waitGrounded = async (tries = 14) => {
+    for (let i = 0; i < tries; i++) {
+      if (parseDebug(await readDebug()).ground === 'true') return true;
+      await sleep(180);
+    }
+    return false;
+  };
+  ok('松手后角色最终落地', await waitGrounded());
+
+  // ── 动作键
+  const jumpAt = await rectOf(`[...document.querySelectorAll('#touch-layer button')].find((b) => b.textContent === '跳')`);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: jumpAt.x, y: jumpAt.y, id: 21 }] });
+  await sleep(150);
+  const touchJump = parseVelocity(await readStats());
+  const touchJumpDebug = parseDebug(await readDebug());
+  await shot('13-touch-jump');
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+  ok('触屏跳跃键 → 垂直速度为负（正在上升）', touchJump && touchJump.vy < 0, `vy=${touchJump?.vy}`);
+  ok('触屏跳跃使角色离地', touchJumpDebug.ground === 'false', `ground=${touchJumpDebug.ground}`);
+
+  await sleep(1500);
+  await waitGrounded();
+
+  const dashAt = await rectOf(`[...document.querySelectorAll('#touch-layer button')].find((b) => b.textContent === '冲')`);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: dashAt.x, y: dashAt.y, id: 22 }] });
+  // 冻结 50ms + 冲刺 150ms，取 150ms 稳稳落在冲刺期内
+  await sleep(150);
+  const touchDash = parseVelocity(await readStats());
+  await shot('14-touch-dash');
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  ok('触屏冲刺键 → 远超跑速的速度', touchDash && Math.abs(touchDash.vx) >= 300, `vx=${touchDash?.vx}`);
+
+  // 抓墙：这一关附近没有墙，没法断言物理结果，但必须断言
+  // 「触摸确实落在了这颗按钮上、并且真的驱动了按下状态」——
+  // 按下态是同一个 handler 画的，它的变化就是 handler 跑过的证据。
+  const grabBtn = `[...document.querySelectorAll('#touch-layer button')].find((b) => b.textContent === '抓')`;
+  const grabBgIdle = await evaluate(`${grabBtn}.style.background`);
+  const grabAt = await rectOf(grabBtn);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: grabAt.x, y: grabAt.y, id: 23 }] });
+  await sleep(140);
+  const grabBgDown = await evaluate(`${grabBtn}.style.background`);
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(140);
+  const grabBgUp = await evaluate(`${grabBtn}.style.background`);
+
+  ok('抓墙键按下有视觉反馈（证明触摸确实落在按钮上）', grabBgDown !== grabBgIdle, grabBgIdle);
+  ok('抓墙键抬起后恢复原状', grabBgUp === grabBgIdle, grabBgUp);
+
+  // ── 返回：手机上没有 Esc，没有这颗键就等于进得去出不来
+  const backAt = await rectOf(`[...document.querySelectorAll('#touch-layer button')].find((b) => b.textContent === '返回')`);
+  await tap(backAt.x, backAt.y, 31);
+  await sleep(700);
+  ok('触屏返回键回到选关（手机上没有 Esc）',
+    (await evaluate(`!!document.getElementById('select-scene')`)) === true);
+  ok('离开游戏后触屏控件被移除（不留残余 DOM）',
+    (await evaluate(`!document.getElementById('touch-layer')`)) === true);
+
+  // ── 竖屏：关卡网格必须放得下
+  // 网格原本写死 5 列 × 132px = 700px，在横屏手机（844px）里正好，
+  // 但竖屏（390px）会把右边三列直接切掉。手机上打不开选关 = 打不开游戏。
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 390, height: 780, deviceScaleFactor: 2, mobile: true,
+  });
+  await sleep(800);
+  const portrait = await evaluate(`(() => {
+    const grid = document.querySelector('#select-scene > div:nth-child(3)');
+    const cards = [...document.querySelectorAll('#select-scene div[style*="border-radius: 6px"]')];
+    if (!grid || !cards.length) return null;
+    const g = grid.getBoundingClientRect();
+    return {
+      cols: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+      left: Math.round(g.left), right: Math.round(g.right), innerW: innerWidth,
+      cardW: Math.round(cards[0].getBoundingClientRect().width),
+      cards: cards.length,
+    };
+  })()`);
+  ok('竖屏下关卡网格完整落在视口内（不被切掉）',
+    !!portrait && portrait.left >= -0.5 && portrait.right <= portrait.innerW + 0.5,
+    JSON.stringify(portrait));
+  ok('竖屏下关卡卡片仍可读（宽 ≥ 90px）', !!portrait && portrait.cardW >= 90, `卡片宽 ${portrait?.cardW}px`);
+  ok('15 关一张不少', !!portrait && portrait.cards === 15, `${portrait?.cards} 张`);
+  await shot('15-touch-portrait');
+
+  const touchErrors = errors.length;
+  ok('触屏全流程无控制台异常', touchErrors === 0, errors.slice(0, 2).join(' | '));
 
   const lateErrors = errors.length;
   ok('全流程仍无控制台异常', lateErrors === 0, errors.slice(0, 2).join(' | '));
