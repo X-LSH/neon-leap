@@ -224,7 +224,9 @@ async function main() {
   const dashesBefore = Number(String(beforeDash.dash || '').split(/\s+/)[0]);
 
   await keyDown('KeyX', 'KeyX', 88);
-  await sleep(70);
+  // 必须等过 HUD 的 100ms 节流窗口，否则读到的是冲刺之前那一帧的旧值。
+  // 冲刺共 200ms（冻结 50 + 冲刺 150），150ms 时稳稳落在冲刺期。
+  await sleep(150);
   const dashStats = parseVelocity(await readStats());
   const dashDebug = parseDebug(await readDebug());
   const dashesAfter = Number(String(dashDebug.dash || '').split(/\s+/)[0]);
@@ -274,6 +276,38 @@ async function main() {
   await shot('08-portal');
   const anchorC = parseDebug(await readDebug());
   ok('考区跳转生效（传送门）', anchorC.anchor === '传送门', `anchor=${anchorC.anchor}`);
+
+  // ── 1080p 帧率实测
+  // 规格里的「60fps 稳定」必须有数据支撑 —— 靠肉眼看流畅度是测不出 52fps 和 60fps 差别的。
+  await keyDown('[', 'BracketLeft', 219);
+  await keyUp('[', 'BracketLeft', 219);
+  await sleep(400);
+  const anchorPerf = parseDebug(await readDebug());
+  ok('回到助力类机关考区做压力测试', anchorPerf.anchor === '机关·助力', `anchor=${anchorPerf.anchor}`);
+
+  // 连续跑动 + 反复起跳，让粒子系统持续处于高负载
+  await keyDown('ArrowRight', 'ArrowRight', 39);
+  for (let i = 0; i < 12; i++) {
+    await keyDown('KeyZ', 'KeyZ', 90);
+    await sleep(36);
+    await keyUp('KeyZ', 'KeyZ', 90);
+    await sleep(190);
+  }
+  // 趁粒子（落地尘寿命 0.16~0.34s）还在场上时立刻取样与截图
+  await shot('09-perf');
+  const midDebug = String(await readDebug());
+  const midMatch = midDebug.match(/particles\s+(\d+)\s*\/\s*(\d+)/);
+  await keyUp('ArrowRight', 'ArrowRight', 39);
+
+  const fpsText = String(await evaluate(`document.getElementById('stats').textContent`));
+  const fpsMatch = fpsText.match(/(\d+)\s*fps/);
+  const fps = fpsMatch ? Number(fpsMatch[1]) : 0;
+  ok('1080p 连续机动下帧率 ≥ 55', fps >= 55, `${fps} fps（HUD: ${fpsText.trim()}）`);
+
+  const liveParts = midMatch ? Number(midMatch[1]) : -1;
+  const capParts = midMatch ? Number(midMatch[2]) : -1;
+  ok('机动过程中确实产生了粒子', liveParts > 0, `particles=${liveParts}`);
+  ok('粒子数没有溢出池容量', capParts === 400 && liveParts <= 400, `${liveParts} / ${capParts}`);
 
   // ── 响应式：切到手机宽度
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 780, deviceScaleFactor: 2, mobile: true });

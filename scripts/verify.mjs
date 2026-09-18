@@ -23,6 +23,10 @@ import {
   createEntities, updateEntities, ENTITY, CRUMBLE_STATE, triggerCrumble, spikeHitbox,
 } from '../src/game/entities.js';
 import { resolveInteractions } from '../src/game/interact.js';
+import {
+  createParticles, updateParticles, liveCount, clearParticles,
+  spawnGhost, spawnRing, burstDust,
+} from '../src/game/particles.js';
 import testbed from '../src/levels/testbed.js';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -402,6 +406,48 @@ section('机关系统');
     }
     ok('崩塌地块铺在坑洞之上（否则形同虚设）', useless.length === 0, useless.join(' '));
   }
+}
+
+// ── 7. 粒子系统
+section('粒子系统');
+{
+  const CAP = 400;
+  const p = createParticles({ capacity: CAP });
+
+  ok('容量为声明值', p.capacity === CAP);
+  ok('全部缓冲都是定长 TypedArray',
+    p.x.length === CAP && p.life.length === CAP && p.kind.length === CAP && p.color.length === CAP);
+  ok('初始没有存活粒子', liveCount(p) === 0);
+
+  // 溢出：spawn 远超容量，池子必须不增长、只覆盖最旧的
+  for (let i = 0; i < 900; i++) spawnGhost(p, i, i, 10);
+  ok('溢出后存活数不超过容量（池子不增长）', liveCount(p) <= CAP, `${liveCount(p)} / ${CAP}`);
+  ok('累计 spawn 计数如实记录', p.total === 900, `total=${p.total}`);
+  ok('环形覆盖：写指针已绕回正确位置', p.head === 900 % CAP, `head=${p.head}`);
+  ok('所有缓冲长度仍是 400（没有偷偷扩容）', p.x.length === CAP && p.life.length === CAP);
+
+  // 寿命推进
+  const q = createParticles({ capacity: 16 });
+  spawnRing(q, 0, 0);
+  const before = liveCount(q);
+  for (let i = 0; i < 60; i++) updateParticles(q, FIXED_DT);
+  ok('粒子会自然消亡', before === 1 && liveCount(q) === 0, `${before} → ${liveCount(q)}`);
+
+  // 确定性：相同种子序列必须产出完全相同的粒子场
+  const a = createParticles({ capacity: 32 });
+  const b = createParticles({ capacity: 32 });
+  for (let i = 0; i < 20; i++) {
+    burstDust(a, i, i, 1, 3);
+    burstDust(b, i, i, 1, 3);
+  }
+  let identical = true;
+  for (let i = 0; i < 32; i++) {
+    if (a.x[i] !== b.x[i] || a.vx[i] !== b.vx[i] || a.vy[i] !== b.vy[i]) { identical = false; break; }
+  }
+  ok('粒子形态完全确定性（录像逐帧比对的前提）', identical);
+
+  clearParticles(q);
+  ok('clear 之后没有存活粒子', liveCount(q) === 0);
 }
 
 // ── 结果

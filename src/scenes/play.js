@@ -2,7 +2,7 @@
  * 游戏主场景。唯一允许同时接触输入、更新与渲染的层。
  *
  * 渲染顺序（与 SPEC 第 4.2 节一致）：
- *   背景网格 → 地形 → 机关 → 残影 → 玩家 → 出口 → HUD(DOM)
+ *   背景网格 → 地形 → 机关 → 粒子（残影在下、火花在上）→ 玩家 → 出口 → HUD(DOM)
  */
 
 import { TILE } from '../game/config.js';
@@ -11,15 +11,26 @@ import { createPlayer, updatePlayer, killPlayer, respawnPlayer, interpolated } f
 import { createCamera, updateCamera, snapCamera, shakeCamera } from '../game/camera.js';
 import { createEntities, updateEntities, ENTITY, CRUMBLE_STATE } from '../game/entities.js';
 import { resolveInteractions, makePlatformGroundCheck } from '../game/interact.js';
+import {
+  createParticles, updateParticles, liveCount, clearParticles,
+  burstDust, burstSparks, spawnGhost, burstDeath, spawnRing,
+  spawnRipple, spawnWallSpark, burstBounce,
+} from '../game/particles.js';
 import { drawBackdrop } from '../render/backdrop.js';
 import { drawEntities } from '../render/entities.js';
+import { drawParticles } from '../render/particles.js';
+import { createHud } from '../render/hud.js';
 import { PAL } from '../render/palette.js';
 import { glowStroke, polyPath, circlePath } from '../render/draw.js';
 import testbed from '../levels/testbed.js';
 
-const TRAIL_LIFE = 0.28;
-const TRAIL_MAX = 24;
 const RESPAWN_DELAY = 0.45;
+const PARTICLE_CAP = 400;
+
+/** 残影发射间隔（秒）。每步都发会让池子被残影吃光。 */
+const GHOST_INTERVAL = 0.022;
+/** 墙滑火星的发射间隔。 */
+const WALL_SPARK_INTERVAL = 0.045;
 
 /**
  * 玩家专用的四层辉光：比默认多一层外晕。
@@ -41,16 +52,14 @@ export function createPlayScene({ view, input }) {
   const camera = createCamera();
   const ents = createEntities(world);
   const groundCheck = makePlatformGroundCheck(ents);
-  const trail = [];
-
-  const elStats = document.getElementById('stats');
-  const elDebug = document.getElementById('debug');
+  const particles = createParticles({ capacity: PARTICLE_CAP });
+  const hud = createHud();
 
   let elapsed = 0;
   let deaths = 0;
-  let debug = true;
-  let hudTimer = 0;
   let respawnTimer = 0;
+  let ghostTimer = 0;
+  let wallSparkTimer = 0;
 
   /** 关卡重开时把机关恢复到初始状态（含崩塌地块与各类冷却）。 */
   function resetEntities() {
@@ -68,7 +77,7 @@ export function createPlayScene({ view, input }) {
 
   function restart() {
     respawnPlayer(player, world.spawn.x * TILE, world.spawn.y * TILE);
-    trail.length = 0;
+    clearParticles(particles);
     camera.shake = 0;
     camera.offsetX = 0;
     camera.offsetY = 0;
@@ -89,16 +98,16 @@ export function createPlayScene({ view, input }) {
     const a = anchors[anchorIndex];
     respawnPlayer(player, a.x * TILE, a.y * TILE);
     resetEntities();
-    trail.length = 0;
+    clearParticles(particles);
     camera.shake = 0;
     snapCamera(camera, player, view, world);
-    elStats.textContent = `考区 · ${a.name}`;
+    hud.flash(`考区 · ${a.name}`);
   }
 
   function handleEvents(events) {
     for (const e of events) {
       if (e === 'restart') restart();
-      else if (e === 'toggleDebug') debug = !debug;
+      else if (e === 'toggleDebug') hud.toggleDebug();
       else if (e === 'nextAnchor') jumpAnchor(1);
       else if (e === 'prevAnchor') jumpAnchor(-1);
     }
@@ -114,23 +123,68 @@ export function createPlayScene({ view, input }) {
     const hit = resolveInteractions(player, ents);
     input.endStep();
 
+    // ── 视觉反馈：每个机动都必须在「发生的同一帧」给出回应。
+    //    玩家对机制的信任，来自机制对操作的即时回应；
+    //    延迟一帧的反馈就会让人怀疑「到底生效没有」。
+    const cx = player.x + player.w / 2;
+    const feetY = player.y + player.h;
+
+    if (player.justJumped) {
+      burstDust(particles, cx, feetY, 0.75, 5);
+    }
+    if (player.justLanded) {
+      burstDust(particles, cx, feetY, 1.25, 8);
+      spawnRing(particles, cx, feetY);
+      shakeCamera(camera, 1.4);
+    }
+    if (player.justDashed) {
+      burstSparks(particles, cx, player.y + player.h / 2, player.dashDirX, player.dashDirY, 10);
+    }
+
+    // 残影按固定间隔发射：每步都发会把池子吃光，那是"看起来更炫"和"跑得动"的分界线
+    if (player.freeze > 0 || player.dashTimer > 0) {
+      ghostTimer -= dt;
+      if (ghostTimer <= 0) {
+        ghostTimer = GHOST_INTERVAL;
+        spawnGhost(particles, player.x, player.y, player.w);
+      }
+    } else {
+      ghostTimer = 0;
+    }
+
+    if (player.state === 'wall_slide') {
+      wallSparkTimer -= dt;
+      if (wallSparkTimer <= 0) {
+        wallSparkTimer = WALL_SPARK_INTERVAL;
+        spawnWallSpark(
+          particles,
+          player.wallDir > 0 ? player.x + player.w : player.x,
+          player.y + player.h,
+          player.wallDir,
+        );
+      }
+    } else {
+      wallSparkTimer = 0;
+    }
+
+    for (const ev of hit.events) {
+      if (ev.type === 'bounce') {
+        burstBounce(particles, cx, feetY, 14);
+        shakeCamera(camera, 3.5);
+      } else if (ev.type === 'portal') {
+        spawnRipple(particles, cx, player.y + player.h / 2);
+        shakeCamera(camera, 2.5);
+      }
+    }
+
     if (hit.killed && !player.dead) {
       killPlayer(player);
-      shakeCamera(camera, 9);
+      burstDeath(particles, cx, player.y + player.h / 2, 26);
+      shakeCamera(camera, 11);
       respawnTimer = RESPAWN_DELAY;
     }
 
-    const dashing = player.dashTimer > 0 || player.freeze > 0;
-    if (dashing) {
-      trail.push({ x: player.x, y: player.y, life: TRAIL_LIFE });
-      if (trail.length > TRAIL_MAX) trail.shift();
-    }
-    for (let i = trail.length - 1; i >= 0; i--) {
-      trail[i].life -= dt;
-      if (trail[i].life <= 0) trail.splice(i, 1);
-    }
-
-    // 掉出世界 → 死亡。留一小段停顿让震动被看见，再复活。
+    // 掉出世界 → 死亡。留一小段停顿让震动与爆散被看见，再复活。
     if (!player.dead && player.y > world.worldH + 60) {
       killPlayer(player);
       shakeCamera(camera, 9);
@@ -144,36 +198,34 @@ export function createPlayScene({ view, input }) {
       }
     }
 
-    if (player.justLanded) shakeCamera(camera, 1.2);
-
+    updateParticles(particles, dt);
     updateCamera(camera, player, view, world, dt);
     updateHud(dt);
   }
 
+  let lastFps = 0;
+
   function updateHud(dt) {
-    hudTimer -= dt;
-    if (hudTimer > 0) return;
-    hudTimer = 0.1;
-
-    elStats.textContent =
-      `${player.vx | 0} / ${player.vy | 0} u/s　${elapsed.toFixed(1)}s　死亡 ${deaths}`;
-
-    if (!debug) {
-      elDebug.textContent = '';
-      return;
-    }
-    const p = player;
-    const row = (k, v) => `${k.padEnd(7)}${v}\n`;
-    elDebug.textContent =
-      row('state', p.state) +
-      row('ground', String(p.grounded)) +
-      row('wall', `${p.wallDir}  lock ${p.wallLock.toFixed(2)}`) +
-      row('coyote', p.coyote.toFixed(3)) +
-      row('buffer', p.buffer.toFixed(3)) +
-      row('dash', `${p.dashesLeft}  cd ${p.dashCd.toFixed(2)}  frz ${p.freeze.toFixed(2)}`) +
-      row('stam', p.stamina.toFixed(2)) +
-      row('trail', String(trail.length)) +
-      row('anchor', world.level.anchors ? world.level.anchors[anchorIndex].name : '-');
+    hud.update(dt, {
+      vx: player.vx,
+      vy: player.vy,
+      elapsed,
+      deaths,
+      fps: lastFps,
+      state: player.state,
+      grounded: player.grounded,
+      wallDir: player.wallDir,
+      wallLock: player.wallLock,
+      coyote: player.coyote,
+      buffer: player.buffer,
+      dashesLeft: player.dashesLeft,
+      dashCd: player.dashCd,
+      freeze: player.freeze,
+      stamina: player.stamina,
+      particles: liveCount(particles),
+      particleCap: particles.capacity,
+      anchor: world.level.anchors ? world.level.anchors[anchorIndex].name : '-',
+    });
   }
 
   function visibleTileRange() {
@@ -286,15 +338,6 @@ export function createPlayScene({ view, input }) {
     }
   }
 
-  function drawTrail() {
-    ctx.fillStyle = PAL.trail;
-    for (const t of trail) {
-      ctx.globalAlpha = (t.life / TRAIL_LIFE) * 0.35;
-      ctx.fillRect(t.x, t.y, player.w, player.h);
-    }
-    ctx.globalAlpha = 1;
-  }
-
   function drawPlayer(alpha) {
     const pos = interpolated(player, alpha);
     const cx = pos.x + player.w / 2;
@@ -346,7 +389,7 @@ export function createPlayScene({ view, input }) {
     if (world.level.showRuler) drawRuler();
     drawEntities(ctx, ents, elapsed);
     drawExit();
-    drawTrail();
+    drawParticles(ctx, particles);
     drawPlayer(alpha);
   }
 
@@ -357,6 +400,9 @@ export function createPlayScene({ view, input }) {
     update,
     render,
     handleEvents,
+    setFps(v) {
+      lastFps = v;
+    },
     onResize() {
       view.resize();
     },

@@ -29,6 +29,9 @@ const loop = createLoop({
   draw(alpha) {
     scene.render(alpha);
   },
+  onStats(s) {
+    scene.setFps(s.fps);
+  },
 });
 
 function refit() {
