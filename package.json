@@ -1,0 +1,12 @@
+{
+  "name": "neon-leap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NEON LEAP · 霓虹矢量精确平台跳跃。零构建、零依赖、纯静态。",
+  "scripts": {
+    "serve": "node scripts/serve.mjs",
+    "verify": "node scripts/verify.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  }
+}

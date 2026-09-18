@@ -1,0 +1,14 @@
+# 本地临时产物（截图、Chrome 配置、缓存）
+.tmp/
+
+# 依赖（本项目零依赖，这一行只是防御）
+node_modules/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

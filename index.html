@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#05060a">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<title>NEON LEAP · 霓虹跃迁</title>
+<style>
+  :root {
+    --void: #05060a;
+    --bg: #0a0d16;
+    --player: #35e0ff;
+    --danger: #ff2d7a;
+    --portal: #c16bff;
+    --ui-text: #e8eef7;
+    --ui-dim: #6b7a90;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: var(--void); color: var(--ui-text);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #screen { display: block; width: 100%; height: 100%; }
+
+  .panel {
+    position: absolute;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px; line-height: 1.65; letter-spacing: 0.02em;
+    color: var(--ui-dim);
+    pointer-events: none;
+  }
+  #stats { top: 12px; right: 16px; text-align: right; }
+  #stats b { color: var(--player); font-weight: 500; }
+  #debug { top: 12px; left: 16px; white-space: pre; }
+  #debug .k { color: #3d4a5c; }
+  #debug .v { color: var(--ui-text); }
+  #debug .hot { color: var(--player); }
+  #debug .warn { color: var(--danger); }
+
+  #hint {
+    position: absolute; left: 16px; bottom: 14px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; line-height: 1.7; color: #4a5668;
+    pointer-events: none;
+  }
+  #hint em { color: var(--player); font-style: normal; }
+</style>
+</head>
+<body>
+  <canvas id="screen"></canvas>
+  <div id="stats" class="panel"></div>
+  <div id="debug" class="panel"></div>
+  <div id="hint">
+    <em>← →</em> 移动 &nbsp; <em>Z</em> 跳跃 &nbsp; <em>X</em> 冲刺 &nbsp; <em>C</em> 抓墙 &nbsp; <em>R</em> 重开 &nbsp; <em>F1</em> 调试
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
